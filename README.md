@@ -12,4 +12,5 @@ AI News Agent 旨在通过自动化流程抓取、筛选、总结最新 AI 资�
 
 ## 快速开始
 
-*(待补充)*
+[TASK-001 项目骨架](doc/tasks_chatgpt.md) 拆解而来。
+由 DeepseekBridge 提供开发支持。
