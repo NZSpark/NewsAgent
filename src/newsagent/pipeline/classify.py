@@ -6,7 +6,7 @@ import json
 from ..logging_setup import LLMError, get_logger
 from ..llm import generate
 from ..llm.prompts import get_prompt
-from ..llm.schemas import ARTICLE_ANALYSIS
+from ..llm.schemas import ARTICLE_ANALYSIS, ARTICLE_SUMMARY
 from ..storage.database import connect
 from ..storage.repository import ArticleRepository
 
@@ -60,7 +60,7 @@ def analyze_article(row, conn=None) -> dict | None:
                 {"role": "system", "content": summarizer.system},
                 {"role": "user", "content": summarizer.render(title=title, source=source, content=excerpt or title)},
             ],
-            schema=ARTICLE_ANALYSIS,
+            schema=ARTICLE_SUMMARY,
             prompt_version=summarizer.version,
             conn=conn,
         )

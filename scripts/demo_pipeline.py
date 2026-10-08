@@ -9,15 +9,16 @@ from newsagent.llm import client as llm_client
 
 
 def fake_call(provider, messages, model):
+    system = messages[0]["content"].lower()
     user = messages[-1]["content"].lower()
-    if "whether an article" in messages[0]["content"].lower():
-        related = "ai" in user or "model" in user or "openai" in user
+    if "ai news editor" in system and "decide whether" in system:
+        related = "ai" in user or "model" in user or "openai" in user or "gemini" in user
         return (
             '{"is_ai_related": %s, "topics": ["LLM"], "entities": ["OpenAI"], "confidence": 0.9}'
             % ("true" if related else "false"),
             {},
         )
-    if "summarize" in messages[0]["content"].lower() or "summary" in user:
+    if "summary" in system or "summarize" in system:
         return '{"summary": "AI summary", "importance": 0.7, "confidence": 0.8}', {}
     return '{"answer": "这是本地新闻库的摘要。", "sources": []}', {}
 

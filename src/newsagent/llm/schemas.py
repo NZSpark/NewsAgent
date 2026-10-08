@@ -18,6 +18,12 @@ ARTICLE_ANALYSIS = {
     "confidence": (False, (int, float)),
 }
 
+ARTICLE_SUMMARY = {
+    "summary": (True, str),
+    "importance": (False, (int, float)),
+    "confidence": (False, (int, float)),
+}
+
 EVENT_ANALYSIS = {
     "summary": (True, str),
     "why_it_matters": (False, str),

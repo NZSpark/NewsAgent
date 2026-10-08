@@ -1,6 +1,9 @@
 # AI 新闻 Agent 任务拆解
 
 > 依据 `doc/design_chatgpt.md` 拆解。按依赖顺序实施，先完成单机 MVP，再扩展高级能力。
+>
+> **实现状态**：P0–P6 核心链路已落地，测试 41 passed。P7 后置能力未实现。
+> 完成度见文末「实施状态」。
 
 ## 1. 阶段总览
 
@@ -634,6 +637,70 @@ TASK-019 Circuit Breaker 可与 P6 一起完成，不应阻塞最小 MVP。
 - [ ] 单个网站失败不阻塞 Pipeline
 - [ ] 单个 LLM Provider 失败不阻塞 Pipeline
 - [ ] CLI 可以查看 sources/events/health
+
+## 实施状态（本次交付）
+
+| 任务 | 状态 | 位置 |
+| --- | --- | --- |
+| TASK-001 项目骨架 | ✅ | `pyproject.toml`, `src/newsagent/` |
+| TASK-002 配置系统 | ✅ | `config.py` |
+| TASK-003 日志与错误模型 | ✅ | `logging_setup.py` |
+| TASK-004 解析 sites.md | ✅ | `sources/registry.py` |
+| TASK-005 Source 状态 | ✅ | `sources/models.py`, `storage/repository.py` |
+| TASK-006 RSS Fetcher | ✅ | `fetch/rss.py`（支持 ETag/Last-Modified） |
+| TASK-007 HTML Fetcher | ✅ | `fetch/html.py`（+ Jina 兜底） |
+| TASK-008 统一 Fetch 接口 | ✅ | `fetch/__init__.py` |
+| TASK-009 SQLite Schema | ✅ | `storage/database.py` |
+| TASK-010 Article Repository | ✅ | `storage/repository.py` |
+| TASK-011 Normalizer | ✅ | `pipeline/normalize.py` |
+| TASK-012 Deterministic Dedup | ✅ | `pipeline/dedup.py` |
+| TASK-013 Pipeline Run | ✅ | `storage/repository.py`, `pipeline/runner.py` |
+| TASK-014 Provider 配置 | ✅ | `llm/providers.py`, `config.py` |
+| TASK-015 统一 LLM Client | ✅ | `llm/client.py` |
+| TASK-016 Provider Router | ✅ | `llm/router.py` |
+| TASK-017 Retry + Fallback | ✅ | `llm/client.py` |
+| TASK-018 Provider Concurrency | ✅ | `llm/client.py`（线程池） |
+| TASK-019 Circuit Breaker | ✅ | `llm/circuit.py` |
+| TASK-020 JSON Schema | ✅ | `llm/schemas.py` |
+| TASK-021 Prompt Registry | ✅ | `llm/prompts.py` |
+| TASK-022 LLM Usage Logging | ✅ | `llm/usage.py` |
+| TASK-023 AI Relevance Classifier | ✅ | `pipeline/classify.py` |
+| TASK-024 Article Summary | ✅ | `pipeline/classify.py` |
+| TASK-025 基础 Event Clustering | ✅ | `pipeline/cluster.py` |
+| TASK-026 语义聚类 | ⏳ 后置 | 规则聚类已足够 MVP |
+| TASK-027 Evidence Collector | ✅ | `pipeline/cluster.py`（relation_type） |
+| TASK-028 Claims | ✅ | `storage/models.py`, `repository.py` |
+| TASK-029 Event Analysis | ✅ | `llm/prompts.py`（event_analyzer） |
+| TASK-030 Source Conflict Review | ✅ | `llm/prompts.py`（evidence_reviewer） |
+| TASK-031 Freshness Score | ✅ | `pipeline/ranking.py` |
+| TASK-032 Novelty Score | ✅ | `pipeline/ranking.py` |
+| TASK-033 Source/Evidence Score | ✅ | `pipeline/ranking.py` |
+| TASK-034 Event Ranking | ✅ | `pipeline/ranking.py` |
+| TASK-035 Local Event Search | ✅ | `storage/search.py` |
+| TASK-036 Query Agent | ✅ | `agents/query.py` |
+| TASK-037 CLI | ✅ | `cli/main.py` |
+| TASK-038 Scheduler | ✅ | `sources/scheduler.py`, `cli/schedule.py` |
+| TASK-039 Fetch Retry/Backoff | ✅ | `sources/scheduler.py` |
+| TASK-040 Source Health | ✅ | `sources/scheduler.py` |
+| TASK-041 LLM Health | ✅ | `llm/health.py` |
+| TASK-042 主动研究 Agent | ❌ 后置 | |
+| TASK-043 自动日报/周报 | ❌ 后置 | |
+| TASK-044 向量检索 | ❌ 后置 | |
+| TASK-045 PostgreSQL/pgvector | ❌ 后置 | |
+
+### 验证结果
+
+- `pytest -q` → **41 passed**
+- 实抓测试：5 个来源，145 篇新文章入库，单源 429 被隔离
+- 去重幂等：二次运行 TechCrunch 50 candidates → 0 new
+- 端到端（mock LLM）：classify 20 → cluster 7 events → ranking → queryable
+- LLM 重试/降级/熔断：mock 测试覆盖；真实 Provider 未登录时返回 502 并正确 fallback
+
+### 已知环境前提
+
+本地三个 Web 代理需处于**已登录**状态。若上游浏览器会话未登录，`/v1/models` 返回 200 但 chat completion 返回 502（错误信息提示「无法找到对话输入框」）。此时 Agent 会按 `LLM_PROVIDERS` 顺序自动降级。
+
+---
 
 # 5. MVP 明确不做
 
