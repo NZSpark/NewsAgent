@@ -90,6 +90,46 @@ def index_events(conn: sqlite3.Connection, limit: int = 500) -> int:
     return len(rows)
 
 
+def index_articles(conn: sqlite3.Connection, limit: int = 1000) -> int:
+    """Embed recent articles (title + content excerpt)."""
+    init_vector_schema(conn)
+    rows = list(
+        conn.execute(
+            """SELECT id, title, content FROM articles
+               WHERE length(title) > 10
+               ORDER BY COALESCE(published_at, first_seen_at) DESC LIMIT ?""",
+            (limit,),
+        )
+    )
+    for row in rows:
+        text = f"{row['title']}\n{(row['content'] or '')[:500]}"
+        upsert_vector(conn, "article", row["id"], embed(text))
+    return len(rows)
+
+
+def search_articles(conn: sqlite3.Connection, query: str, limit: int = 20, min_score: float = 0.05) -> list[dict]:
+    """Cosine search over stored article vectors."""
+    init_vector_schema(conn)
+    qvec = embed(query)
+    results: list[tuple[float, dict]] = []
+    rows = list(
+        conn.execute(
+            """SELECT a.id, a.title, a.url, a.source_id, a.published_at, v.vector AS _vec
+               FROM embeddings v JOIN articles a ON a.id = v.item_id
+               WHERE v.item_type='article'"""
+        )
+    )
+    for row in rows:
+        data = dict(row)
+        vec = json.loads(data.pop("_vec"))
+        score = cosine(qvec, vec)
+        if score >= min_score:
+            data["score"] = round(score, 4)
+            results.append((score, data))
+    results.sort(key=lambda x: x[0], reverse=True)
+    return [d for _, d in results[:limit]]
+
+
 def semantic_search(conn: sqlite3.Connection, query: str, limit: int = 20, min_score: float = 0.05) -> list[dict]:
     """Cosine search over stored event vectors, joined with event rows."""
     init_vector_schema(conn)

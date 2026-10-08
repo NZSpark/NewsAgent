@@ -80,6 +80,36 @@ def test_circuit_opens_after_threshold():
     assert c.state == "CLOSED"
 
 
+def test_allow_prose_accepts_non_json(monkeypatch):
+    def fake(provider, messages, model):
+        return "这是一段中文回答，不是 JSON。", {}
+
+    monkeypatch.setattr(llm_client, "_call_once", fake)
+    out = llm_client.generate(
+        "user_query", [{"role": "user", "content": "x"}],
+        schema={"answer": (True, str)}, allow_prose=True,
+    )
+    assert out["text"].startswith("这是一段中文回答")
+
+
+def test_prose_rejected_without_flag(monkeypatch):
+    def fake(provider, messages, model):
+        return "plain prose no json", {}
+
+    monkeypatch.setattr(llm_client, "_call_once", fake)
+    with pytest.raises(LLMError):
+        llm_client.generate("classify_article", [{"role": "user", "content": "x"}])
+
+
+def test_json_mode_false_returns_text(monkeypatch):
+    def fake(provider, messages, model):
+        return "raw text", {}
+
+    monkeypatch.setattr(llm_client, "_call_once", fake)
+    out = llm_client.generate("user_query", [{"role": "user", "content": "x"}], json_mode=False)
+    assert out["text"] == "raw text"
+
+
 def test_schema_error_on_bad_shape(monkeypatch):
     def fake(provider, messages, model):
         return '{"is_ai_related": "yes"}', {}

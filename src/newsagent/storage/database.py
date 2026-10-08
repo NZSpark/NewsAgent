@@ -122,6 +122,17 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     articles_new INTEGER,
     errors TEXT
 );
+
+CREATE TABLE IF NOT EXISTS embeddings (
+    item_type TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    dim INTEGER NOT NULL,
+    vector TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (item_type, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_type ON embeddings(item_type);
 """
 
 

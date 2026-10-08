@@ -55,13 +55,12 @@ def cmd_event(args) -> int:
 
 def cmd_health(args) -> int:
     from ..llm.health import check_all
+    from ..sources.scheduler import source_health
     from ..storage.database import connect, init_db
-    from ..storage.repository import SourceRepository
     conn = connect()
     init_db(conn)
-    source_health = [dict(r) for r in SourceRepository(conn).health()]
     conn.close()
-    _print({"sources": source_health, "llm_providers": check_all()})
+    _print({"sources": source_health(), "llm_providers": check_all()})
     return 0
 
 
@@ -109,21 +108,25 @@ def cmd_report(args) -> int:
 
 def cmd_index(args) -> int:
     from ..storage.database import connect, init_db
-    from ..storage.vector import index_events
+    from ..storage.vector import index_articles, index_events
     conn = connect()
     init_db(conn)
-    n = index_events(conn, limit=args.limit)
+    n_events = index_events(conn, limit=args.limit)
+    n_articles = index_articles(conn, limit=args.limit)
     conn.close()
-    _print({"indexed": n})
+    _print({"events_indexed": n_events, "articles_indexed": n_articles})
     return 0
 
 
 def cmd_semantic_search(args) -> int:
     from ..storage.database import connect, init_db
-    from ..storage.vector import semantic_search
+    from ..storage.vector import search_articles, semantic_search
     conn = connect()
     init_db(conn)
-    results = semantic_search(conn, args.query, limit=args.limit)
+    if args.articles:
+        results = search_articles(conn, args.query, limit=args.limit)
+    else:
+        results = semantic_search(conn, args.query, limit=args.limit)
     conn.close()
     _print(results)
     return 0
@@ -186,9 +189,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=500)
     sp.set_defaults(func=cmd_index)
 
-    sp = sub.add_parser("semantic-search", help="vector search over events (TASK-044)")
+    sp = sub.add_parser("semantic-search", help="vector search over events/articles (TASK-044)")
     sp.add_argument("query")
     sp.add_argument("--limit", type=int, default=20)
+    sp.add_argument("--articles", action="store_true", help="search articles instead of events")
     sp.set_defaults(func=cmd_semantic_search)
 
     return p

@@ -54,7 +54,7 @@ def test_index_and_semantic_search(conn):
 # --- semantic cluster (TASK-026) ------------------------------------------ #
 
 def test_semantic_cluster_skips_when_few(conn, monkeypatch):
-    out = sc.semantic_cluster(hours=48, min_events=10)
+    out = sc.semantic_cluster(hours=48, min_events=10, conn=conn)
     assert out["skipped"] is True
 
 

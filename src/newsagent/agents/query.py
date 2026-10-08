@@ -17,8 +17,9 @@ log = get_logger("agents.query")
 SYSTEM = (
     "You are an AI news assistant. Answer in Chinese using ONLY the provided "
     "events. Every factual statement must be traceable to a source URL listed "
-    "in the events. If evidence is insufficient, say so. Respond with STRICT "
-    "JSON: {\"answer\": string, \"sources\": string[]}."
+    "in the events. If evidence is insufficient, say so. "
+    "If you can, respond with STRICT JSON: {\"answer\": string, \"sources\": string[]}. "
+    "If you respond in prose instead, that is also acceptable."
 )
 
 _HOURS_RE = re.compile(r"(\d+)\s*(小时|hour|h)", re.IGNORECASE)
@@ -91,8 +92,10 @@ def answer(question: str) -> dict:
             ],
             schema={"answer": (True, str), "sources": (False, list)},
             prompt_version="query_agent:v1",
+            allow_prose=True,
         )
-        answer_text = result.get("answer", "")
+        # Providers may return strict JSON {"answer": ...} or plain prose.
+        answer_text = result.get("answer") or result.get("text") or ""
     except LLMError as exc:
         log.warning("query LLM failed, returning raw events: %s", exc)
         answer_text = "（LLM 不可用）本地相关事件：\n" + _format_events(events)

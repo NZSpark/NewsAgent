@@ -86,8 +86,14 @@ def generate(
     prompt_version: str = "",
     conn: sqlite3.Connection | None = None,
     json_mode: bool = True,
+    allow_prose: bool = False,
 ) -> dict:
-    """Generate a JSON object using task-routed providers with retry/fallback."""
+    """Generate a JSON object using task-routed providers with retry/fallback.
+
+    When `json_mode=False`, the raw text is returned under the `text` key.
+    When `allow_prose=True`, a provider that returns non-JSON text is accepted
+    and wrapped as {"text": <raw>} instead of being treated as a failure.
+    """
     cfg = get_config()
     chain = [provider] if provider else providers_for_task(task)
     last_error: Exception | None = None
@@ -106,9 +112,19 @@ def generate(
             t0 = time.time()
             try:
                 raw, meta = _call_once(candidate, messages, model)
-                data = extract_json(raw) if json_mode else {"text": raw}
-                if schema is not None and json_mode:
-                    data = validate(data, schema, name=task)
+                if json_mode:
+                    try:
+                        data = extract_json(raw)
+                    except SchemaError:
+                        if allow_prose and raw and raw.strip():
+                            # Provider returned prose instead of JSON; accept it.
+                            data = {"text": raw.strip()}
+                        else:
+                            raise
+                    if schema is not None and "text" not in data:
+                        data = validate(data, schema, name=task)
+                else:
+                    data = {"text": raw}
                 circuit.on_success()
                 usage.record(
                     conn, task, candidate, model, prompt_version, started, True,
