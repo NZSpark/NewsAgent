@@ -68,11 +68,54 @@ EVIDENCE_REVIEWER = Prompt(
     ),
 )
 
+SEMANTIC_CLUSTER = Prompt(
+    version="semantic_cluster:v1",
+    system=(
+        "You group AI news headlines that describe the SAME underlying event. "
+        "Only merge titles that clearly refer to one event; when unsure, keep "
+        "them separate. Use ONLY the given event ids. Respond with STRICT JSON."
+    ),
+    user_template=(
+        "Events:\n{events}\n\n"
+        "Return JSON: {{\"groups\": [{{\"event_ids\": [\"id1\", \"id2\"]}}]}}. "
+        "Include only groups with 2+ ids. Omit singletons."
+    ),
+)
+
+RESEARCH_PLANNER = Prompt(
+    version="research_planner:v1",
+    system=(
+        "You are a research planner for an AI news desk. Given one event, "
+        "propose focused follow-up questions that would verify or deepen it. "
+        "Respond with STRICT JSON only."
+    ),
+    user_template=(
+        "Event: {title}\nSummary: {summary}\n\n"
+        "Return JSON: {{\"questions\": string[]}} (2-4 questions)."
+    ),
+)
+
+RESEARCH_REPORT = Prompt(
+    version="research_reporter:v1",
+    system=(
+        "You are a senior AI analyst. Write a research brief in Chinese using "
+        "ONLY the given materials; never invent facts or URLs. STRICT JSON only."
+    ),
+    user_template=(
+        "Event: {title}\nQuestions:\n{questions}\n\nMaterials:\n{materials}\n\n"
+        "Return JSON: {{\"report\": string, \"key_findings\": string[], "
+        "\"open_questions\": string[]}}."
+    ),
+)
+
 REGISTRY: dict[str, Prompt] = {
     "classify_article": CLASSIFIER,
     "summarize_article": SUMMARIZER,
     "event_analysis": EVENT_ANALYZER,
     "evidence_review": EVIDENCE_REVIEWER,
+    "cluster_review": SEMANTIC_CLUSTER,
+    "research_plan": RESEARCH_PLANNER,
+    "research_report": RESEARCH_REPORT,
 }
 
 

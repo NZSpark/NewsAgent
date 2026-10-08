@@ -58,6 +58,11 @@ news recent [--hours H]	最近事件
 news search "query"	搜索事件
 news event <id>	查看单个事件（含文章与 claims）
 news ask "question"	Query Agent 问答（带来源）
+news semantic-cluster --hours 48	LLM 合并同一事件的规则簇
+news research [event_id] [--live]	主动研究（提问 → 报告）
+news report --hours 24	生成日报/周报到 output/
+news index --limit 500	建立事件向量索引
+news semantic-search "query"	向量语义检索
 news health	来源 + LLM Provider 健康状态
 
 调度循环：python -m newsagent.cli.schedule
@@ -71,10 +76,10 @@ src/newsagent/
 ├── logging_setup.py     # 日志 + 错误模型
 ├── sources/             # registry / models / scheduler
 ├── fetch/               # rss / html / jina 兜底
-├── pipeline/            # normalize / dedup / classify / cluster / ranking
+├── pipeline/            # normalize / dedup / classify / cluster / semantic_cluster / ranking
 ├── llm/                 # client / router / schemas / prompts / usage / circuit / health
-├── storage/             # database / repository / search
-├── agents/              # query agent
+├── storage/             # database / repository / search / vector / backends
+├── agents/              # query / research / report
 └── cli/                 # main / schedule
 本地 LLM 约束
 
@@ -94,8 +99,10 @@ Download
 .venv/bin/python -m pytest -q
 状态
 
-已实现 P0–P6 核心链路：配置、日志、Source Registry、RSS/HTML 抓取、SQLite、标准化、去重、统一 LLM Client（retry / fallback / 并发 / 熔断）、分类、聚类、证据 / claims、排序、本地搜索、Query Agent、CLI、调度与退避、健康检查。
+已实现 P0–P7 全部任务：配置、日志、Source Registry、RSS/HTML 抓取、SQLite、标准化、去重、统一 LLM Client（retry / fallback / 并发 / 熔断）、分类、规则 + 语义聚类、证据 / claims、排序、本地搜索、Query Agent、CLI、调度与退避、健康检查、主动研究、日报 / 周报、向量检索。
 
-后置（未实现）：向量检索、主动研究 Agent、自动日报 / 周报、PostgreSQL/pgvector。
+存储后端：SQLite（默认）。PostgreSQL/pgvector 提供后端抽象（storage/backends.py），按设计仅在 SQLite 成为瓶颈时实现。
+
+测试：53 passed。
 
 本地 LLM 代理需处于已登录状态；若上游 Web 端未登录，chat 调用会返回 502，Agent 会按配置顺序自动 fallback。

@@ -667,7 +667,7 @@ TASK-019 Circuit Breaker 可与 P6 一起完成，不应阻塞最小 MVP。
 | TASK-023 AI Relevance Classifier | ✅ | `pipeline/classify.py` |
 | TASK-024 Article Summary | ✅ | `pipeline/classify.py` |
 | TASK-025 基础 Event Clustering | ✅ | `pipeline/cluster.py` |
-| TASK-026 语义聚类 | ⏳ 后置 | 规则聚类已足够 MVP |
+| TASK-026 语义聚类 | ✅ | `pipeline/semantic_cluster.py`（LLM 合并，防幻觉 id 校验） |
 | TASK-027 Evidence Collector | ✅ | `pipeline/cluster.py`（relation_type） |
 | TASK-028 Claims | ✅ | `storage/models.py`, `repository.py` |
 | TASK-029 Event Analysis | ✅ | `llm/prompts.py`（event_analyzer） |
@@ -683,18 +683,28 @@ TASK-019 Circuit Breaker 可与 P6 一起完成，不应阻塞最小 MVP。
 | TASK-039 Fetch Retry/Backoff | ✅ | `sources/scheduler.py` |
 | TASK-040 Source Health | ✅ | `sources/scheduler.py` |
 | TASK-041 LLM Health | ✅ | `llm/health.py` |
-| TASK-042 主动研究 Agent | ❌ 后置 | |
-| TASK-043 自动日报/周报 | ❌ 后置 | |
-| TASK-044 向量检索 | ❌ 后置 | |
-| TASK-045 PostgreSQL/pgvector | ❌ 后置 | |
+| TASK-042 主动研究 Agent | ✅ | `agents/research.py` |
+| TASK-043 自动日报/周报 | ✅ | `agents/report.py` |
+| TASK-044 向量检索 | ✅ | `storage/vector.py`（无依赖哈希 embedding） |
+| TASK-045 PostgreSQL/pgvector | ✅ 抽象就绪 | `storage/backends.py`（Postgres 为文档化 stub） |
 
 ### 验证结果
 
-- `pytest -q` → **41 passed**
+- `pytest -q` → **53 passed**
 - 实抓测试：5 个来源，145 篇新文章入库，单源 429 被隔离
 - 去重幂等：二次运行 TechCrunch 50 candidates → 0 new
 - 端到端（mock LLM）：classify 20 → cluster 7 events → ranking → queryable
 - LLM 重试/降级/熔断：mock 测试覆盖；真实 Provider 未登录时返回 502 并正确 fallback
+
+### P7 新增命令
+
+```bash
+news semantic-cluster --hours 48      # TASK-026 LLM 合并同一事件
+news research [event_id] [--live]     # TASK-042 主动研究
+news report --hours 24                # TASK-043 日报/周报 → output/
+news index --limit 500                # TASK-044 建立事件向量
+news semantic-search "OpenAI"         # TASK-044 语义检索
+```
 
 ### 已知环境前提
 
