@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+pdf = ["weasyprint>=62"]
 
 [project.scripts]
 news = "newsagent.cli.main:main"

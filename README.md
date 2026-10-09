@@ -1,6 +1,6 @@
 # AI News Agent
 
-一个面向 AI 行业资讯的本地新闻采集、分析与检索工具。它从配置的新闻来源收集文章，进行标准化、去重、LLM 分类、事件聚类与重要性排序，并将结果保存在本地 SQLite 数据库中。用户可以通过命令行查询新闻、追问事件、执行主动研究，以及生成 Markdown 日报和周报。
+一个面向 AI 行业资讯的本地新闻采集、分析与检索工具。它从配置的新闻来源收集文章，进行标准化、去重、LLM 分类、事件聚类与重要性排序，并将结果保存在本地 SQLite 数据库中。用户可以通过命令行查询新闻、追问事件、执行主动研究，以及生成 Markdown、HTML 和 PDF 格式的日报与周报。
 
 项目采用 **Python 负责数据管道、规则、状态与存储，LLM 负责语义理解、分类、归纳与分析** 的设计。LLM 通过本地运行的 OpenAI 兼容代理接入 DeepSeek、Gemini 和 ChatGPT Web 等服务，不要求本项目直接集成各服务的专有 API。
 
@@ -34,7 +34,7 @@
 | 本地查询 | 按时间查看事件、关键词搜索、查看事件及关联文章 |
 | Query Agent | 根据本地新闻库回答问题，并返回相关来源链接 |
 | 主动研究 | 针对指定事件或重要事件开展研究；可选择启用实时抓取 fallback |
-| 报告生成 | 生成 Markdown 格式的日报或周报，保存到 `output/` |
+| 报告生成 | 生成 Markdown、HTML 或 PDF 格式的日报与周报，支持一次生成多种格式，保存到 `output/` |
 | 语义检索 | 为文章和事件建立向量索引，并执行语义搜索 |
 | 运行维护 | 日志、来源健康状态、LLM 健康检查、重试、fallback、并发限制和熔断机制 |
 
@@ -70,7 +70,7 @@ Event Ranking
     │
     ├── Local Search / Query Agent
     ├── Active Research
-    ├── Markdown Briefing
+    ├── Markdown / HTML / PDF Briefing
     └── Vector Index / Semantic Search
 ```
 
@@ -182,6 +182,24 @@ Query Agent 会优先使用本地数据库中的事件及关联文章来源，�
 .venv/bin/news report --hours 168
 ```
 
+默认只生成 Markdown，以保持原有行为。也可以选择输出格式：
+
+```bash
+# 只生成 HTML
+.venv/bin/news report --hours 24 --formats html
+
+# 生成 Markdown、HTML 和 PDF
+.venv/bin/news report --hours 24 --formats md,html,pdf
+```
+
+HTML 使用内置模板和 CSS，可离线打开。PDF 使用可选的 WeasyPrint 依赖；首次使用前可尝试安装：
+
+```bash
+.venv/bin/python -m pip install -e ".[pdf]"
+```
+
+WeasyPrint 在部分操作系统上还需要额外的系统库和可用字体，请根据目标平台的安装说明配置。自动化测试已验证 PDF 输出编排，但真实 PDF 的中文字体和分页效果仍需在目标环境中检查。
+
 ### 使用 `python -m` 的方式
 
 如果虚拟环境中的可执行入口不可用，也可以使用模块方式调用 CLI：
@@ -207,7 +225,7 @@ Query Agent 会优先使用本地数据库中的事件及关联文章来源，�
 | `news ask "问题"` | 基于本地事件回答问题 | 问题文本 |
 | `news semantic-cluster` | 使用 LLM 对规则聚类结果进行语义合并 | `--hours H`，默认 48 |
 | `news research` | 研究指定事件或筛选出的重要事件 | 可选 `EVENT_ID`；`--limit N`，默认 3；`--min-importance X`，默认 0.6；`--live` 启用实时抓取 fallback |
-| `news report` | 生成 Markdown 日报或周报 | `--hours H`，默认 24 |
+| `news report` | 生成 Markdown、HTML 或 PDF 日报/周报 | `--hours H`，默认 24；`--formats md,html,pdf`，默认 `md` |
 | `news index` | 建立文章和事件的向量索引 | `--limit N`，默认 500 |
 | `news semantic-search "查询"` | 对事件执行语义搜索 | `--limit N`，默认 20；`--articles` 改为搜索文章 |
 
@@ -320,11 +338,11 @@ news health
 | 路径 | 用途 |
 | --- | --- |
 | `data/newsagent.db` | 默认 SQLite 数据库，保存来源、文章、事件以及流水线状态等数据 |
-| `output/` | Markdown 报告输出目录 |
+| `output/` | Markdown、HTML 和 PDF 报告输出目录 |
 | `doc/sites.md` | 新闻来源清单 |
 | `.env.example` | 环境变量配置示例 |
 
-`news report --hours 24` 生成日报命名格式的 Markdown 文件；更长时间范围使用周报命名格式。报告按照事件评分选择内容，并输出头条及其他事件。实际内容取决于数据库中已有的事件、摘要与评分。
+`news report --hours 24` 默认生成日报命名格式的 Markdown 文件；更长时间范围使用周报命名格式。通过 `--formats md,html,pdf` 可一次请求多种格式，文件共享同一份报告数据和日期，分别使用 `.md`、`.html`、`.pdf` 扩展名。格式生成失败时，命令会报告成功文件与失败原因，并以非零状态结束。报告按照事件评分选择内容，并输出头条及其他事件。实际内容取决于数据库中已有的事件、摘要与评分。
 
 向量索引由 `news index` 显式建立，语义检索通过 `news semantic-search` 执行。常规采集或 `news pipeline` 并不会自动完成全部向量索引工作。
 
@@ -341,7 +359,7 @@ news health
 │   ├── local_llm.md            # 本地 LLM 代理说明
 │   ├── sites.md                # 新闻来源清单
 │   └── tasks_*.md              # 实施任务与阶段记录
-├── output/                     # 生成的日报和周报
+├── output/                     # 生成的 Markdown、HTML 和 PDF 日报/周报
 ├── scripts/                    # 演示及单 Provider 探测脚本
 ├── src/newsagent/
 │   ├── config.py               # 配置及 Provider 默认值

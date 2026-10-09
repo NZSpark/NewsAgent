@@ -100,9 +100,24 @@ def cmd_research(args) -> int:
 
 
 def cmd_report(args) -> int:
-    from ..agents.report import write_report
-    path = write_report(hours=args.hours)
-    print(str(path))
+    from ..agents.report import ReportGenerationError, write_reports
+
+    try:
+        paths = write_reports(hours=args.hours, formats=args.formats)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except ReportGenerationError as exc:
+        _print({
+            "generated": {fmt: str(path) for fmt, path in exc.generated.items()},
+            "errors": exc.errors,
+        })
+        return 1
+
+    if len(paths) == 1:
+        print(str(next(iter(paths.values()))))
+    else:
+        _print({fmt: str(path) for fmt, path in paths.items()})
     return 0
 
 
@@ -183,6 +198,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("report", help="generate daily/weekly briefing (TASK-043)")
     sp.add_argument("--hours", type=int, default=24)
+    sp.add_argument(
+        "--formats",
+        default="md",
+        help="comma-separated output formats: md,html,pdf (default: md)",
+    )
     sp.set_defaults(func=cmd_report)
 
     sp = sub.add_parser("index", help="build event embeddings (TASK-044)")
