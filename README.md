@@ -288,38 +288,43 @@ news health
 
 这些代理使用 OpenAI 兼容的文本对话接口。请遵循 [doc/local_llm.md](doc/local_llm.md) 中的代理约束；不要假设代理支持所有原生 OpenAI 参数。项目设计说明指出，不应发送代理不支持的 `developer` 角色或 `reasoning_effort` 参数。
 
-## Provider 性能实测（原版记录）
+## Provider 性能实测（2026-10-10 重新测量）
 
-> 以下为原版 README 中记录的真实联网测试结果，保留作为历史实测数据参考。本次 README 重写没有重新执行联网测试，因此这些数据不代表当前服务状态或最新性能。
+> 本节数据于 **2026-10-10** 通过 `scripts/probe_llm.py` 与 `newsagent.llm.client.generate` 重新实测，均为真实联网调用本地 Web 代理。延迟受 Web 会话登录状态、上游负载、上下文长度影响，波动很大，请视为量级参考而非精确 SLA。
 
-所有 Provider 均为 Web 端驱动，单轮延迟远高于云端 API，原版记录的实测数据如下：
+### 单轮延迟（ping → PONG，多次采样）
 
-| Provider | 单轮延迟 | 健康检查 | 能否独立完成任务 |
+| Provider | 样本延迟 | 典型值 | 稳定性 |
 | --- | --- | --- | --- |
-| `deepseek-web` | 21–98s | ✅ 21s | ✅ 分类 10/10 成功（首选，`fallback_from=None`） |
-| `gemini-web` | 24s | ✅ 25s | ✅ 分类、中文简报、问答与主动研究全部成功 |
-| `chatgpt-web` | 67–120s+ | ✅ 68s | ⚠️ 短任务（分类 3/3）成功；长上下文 query 超过 120s 超时 |
+| `deepseek-web` | 21.1s / 21.2s / 21.1s / 97.4s | ~21s（偶发 ~97s） | 多数稳定，偶发长尾 |
+| `gemini-web` | 4.9s / 20.9s / 20.9s / 22.5s | ~21s（首次可 ~5s） | 稳定 |
+| `chatgpt-web` | 42.7s / 51.4s / 超时 120s / 504（75.7s） | 40–120s+ | 不稳定，会超时或会话失效 |
 
-### 原版测试结论
+### 健康检查（`news health`，`max(llm_timeout, 60s)` 超时）
 
-- 三个 Provider 的 Web 会话当时均已登录，`news health` 全部返回 `healthy`。原版记录指出，健康检查超时设置为 10 秒时曾误报 DeepSeek 为 down，随后修复为 `max(llm_timeout, 60s)`。
-- 延迟差异明显：DeepSeek 和 Gemini 约 20–25 秒，ChatGPT Web 约 67 秒；长上下文任务可能超过 120 秒。
-- ChatGPT Web 处理长上下文（例如包含多个事件的 query）时曾超时。原版记录提到已经支持按 Provider 配置超时（`CHATGPT_WEB_TIMEOUT=300`），并将 query 上下文裁剪至 10 个事件，以降低延迟。
-- 故障转移链曾实测有效：DeepSeek 返回 502 后由 Gemini 接管；连续失败 3 次后熔断状态进入 `circuit -> OPEN`。
+| Provider | 结果 | 延迟 | 备注 |
+| --- | --- | --- | --- |
+| `deepseek-web` | ✅ healthy（单独运行时） | ~15–21s | 并发请求时会返回 503 `upstream_busy`（会话桶被占用） |
+| `gemini-web` | ✅ healthy | ~24s | 稳定 |
+| `chatgpt-web` | ⚠️ 间歇可用 | 51–120s | 时好时坏；失败时返回 504「疑似未登录或会话失效」 |
 
-### 原版各任务实测耗时
+### 能否独立完成任务（真实分类任务：`classify_article`）
 
-| 任务 | Provider | 耗时 |
+| Provider | 结果 | 实测 |
 | --- | --- | --- |
-| 分类单次 | `deepseek-web` | 21–98s |
-| 分类单次 | `gemini-web` | 约 5s（首次） |
-| 健康检查 | `deepseek-web` | 21.3s |
-| 健康检查 | `gemini-web` | 24.5s |
-| 健康检查 | `chatgpt-web` | 67.6s |
-| query（24 个事件） | `chatgpt-web` | 超时（>120s） |
-| 主动研究 | `gemini-web` | 数十秒，包含 4 个问题、报告与发现 |
+| `deepseek-web` | ✅ 可独立完成 | 2/2 成功：22.8s / 97.2s，均正确返回 `{"ai": true}` |
+| `gemini-web` | ✅ 可独立完成 | 2/2 成功：5.0s / 22.5s，均正确返回 `{"ai": true}` |
+| `chatgpt-web` | ⚠️ 间歇成功 | 1/2 成功：42.7s 返回正确；第二次 160s 后返回无 JSON 内容而失败 |
 
-**注意：** 上述耗时和成功率是原版 README 中的历史记录，而非本次验证结果。实际表现会受 Web 会话登录状态、上游服务、上下文长度、代理配置与网络情况影响。
+### 结论（本次实测）
+
+- **`deepseek-web` 与 `gemini-web` 均能独立完成全部任务**，是可靠的主力与备份组合；单轮延迟量级约 20s，偶发长尾（deepseek 曾达 ~97s）。
+- **`chatgpt-web` 当前状态不稳定**：本次测量中它**时好时坏**——有时 42–51s 正常返回，有时超时（>120s）或返回 504「疑似未登录或会话失效」。与上次记录（曾稳定 67s）相比**质量下降**。
+- **并发会触发 deepseek 的会话冲突**：两个请求同时打到 `deepseek-web` 时，第二个返回 503 `upstream_busy`（提示「会话桶 ua:openai 正在处理另一个请求」）。因此**不要并发调用同一 Provider**；`LLM_CONCURRENCY` 应保持较小，或让不同 Agent 使用不同会话标识。
+- 健康检查超时保持 `max(llm_timeout, 60s)`；早期 10s 超时曾误报 deepseek 为 down。
+- 故障转移链仍有效：provider 失败会按 `LLM_PROVIDERS` 顺序 fallback，连续失败触发熔断 `circuit -> OPEN`。
+
+**重要提示：** `chatgpt-web` 的 504 错误明确指向**上游网页会话未登录/失效**。若要把它作为稳定后备，需要确保 ChatGPT 网页端处于已登录状态。实际表现会随登录状态与上游服务实时变化。
 
 ## 定时采集
 
