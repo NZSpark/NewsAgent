@@ -70,6 +70,31 @@ def test_generate_invalid_json_falls_back(monkeypatch):
     assert out["summary"] == "ok"
 
 
+def test_health_check_uses_generous_timeout(monkeypatch):
+    """Slow Web providers (~20s+) must not be misreported as down."""
+    from newsagent.llm import health
+
+    captured = {}
+
+    class _Resp:
+        choices = [object()]
+
+    class _FakeChat:
+        class completions:  # noqa: N801
+            @staticmethod
+            def create(**kwargs):
+                captured.update(kwargs)
+                return _Resp()
+
+    class _FakeClient:
+        chat = _FakeChat()
+
+    monkeypatch.setattr(health, "make_client", lambda p: _FakeClient())
+    out = health.check_provider("deepseek-web")
+    assert out["healthy"] is True
+    assert captured["timeout"] >= 60.0
+
+
 def test_circuit_opens_after_threshold():
     c = get_circuit("deepseek-web")
     for _ in range(FAILURE_THRESHOLD):
