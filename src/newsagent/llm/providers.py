@@ -14,7 +14,8 @@ from ..config import provider_config, provider_order
 def make_client(provider: str) -> OpenAI:
     pc = provider_config(provider)
     # apiKey is fixed to "none" for all local Web providers.
-    return OpenAI(base_url=pc.base_url, api_key="none", timeout=120.0, max_retries=0)
+    # timeout is per-provider: slow Web backends need a longer budget.
+    return OpenAI(base_url=pc.base_url, api_key="none", timeout=pc.timeout, max_retries=0)
 
 
 def model_for(provider: str) -> str:

@@ -92,6 +92,34 @@ chatgpt-web	http://127.0.0.1:8002/v1	chatgpt-chat	复杂分析、用户查询
 
 不要使用 developer 角色，不要发送 reasoning_effort——本地代理不支持。
 
+Provider 性能实测（真实联网测试）
+
+所有 Provider 均为 Web 端驱动，单轮延迟远高于云端 API，实测数据如下：
+
+Provider	单轮延迟	健康检查	能否独立完成任务
+ deepseek-web	21–98s	✅ 21s	✅ 分类 10/10 成功（首选，fallback_from=None）
+ gemini-web	24s	✅ 25s	✅ 分类 + 中文简报 + 问答 + 主动研究全部成功
+ chatgpt-web	67–120s+	✅ 68s	⚠️ 短任务（分类 3/3）成功；长上下文 query 超 120s 超时
+
+关键结论：
+
+- 三个 Provider 的 Web 会话均已登录，`news health` 全部返回 healthy（曾因健康检查 10s 超时过短而误报 deepseek 为 down，已修复为 `max(llm_timeout, 60s)`）。
+- 延迟差异大：deepseek/gemini 约 20–25s，chatgpt-web 约 67s，长上下文可超 120s。
+- chatgpt-web 对长上下文（如携带多个事件的 query）会超时；已支持**按 Provider 配置超时**（`CHATGPT_WEB_TIMEOUT=300`），并裁剪 query 上下文至 10 个事件以降低延迟。
+- 故障转移链实测有效：deepseek 502 → gemini 接管；连续失败 3 次触发熔断 `circuit -> OPEN`。
+
+各任务实测耗时：
+
+任务	Provider	耗时
+ 分类单次	deepseek-web	21–98s
+ 分类单次	gemini-web	~5s（首次）
+ 健康检查	deepseek-web	21.3s
+ 健康检查	gemini-web	24.5s
+ 健康检查	chatgpt-web	67.6s
+ query（24 事件）	chatgpt-web	超时（>120s）
+ 主动研究
+gemini-web	数十秒，含 4 问 + 报告 + 发现
+
 测试
 bash
 Copy
@@ -103,6 +131,6 @@ Download
 
 存储后端：SQLite（默认）。PostgreSQL/pgvector 提供后端抽象（storage/backends.py），按设计仅在 SQLite 成为瓶颈时实现。
 
-测试：53 passed。
+测试：57 passed。
 
 本地 LLM 代理需处于已登录状态；若上游 Web 端未登录，chat 调用会返回 502，Agent 会按配置顺序自动 fallback。

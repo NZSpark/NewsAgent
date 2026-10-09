@@ -72,16 +72,24 @@ class ProviderConfig:
     name: str
     base_url: str
     model: str
+    timeout: float = 120.0
 
 
 def provider_config(name: str) -> ProviderConfig:
-    """Load one provider, honoring env overrides like DEEPSEEK_WEB_BASE_URL."""
+    """Load one provider, honoring env overrides like DEEPSEEK_WEB_BASE_URL.
+
+    Each provider can have its own timeout via <PREFIX>_TIMEOUT; Web-driven
+    providers vary widely in latency (chatgpt-web can exceed 120s on long
+    contexts), so a single global timeout is not enough.
+    """
     defaults = PROVIDER_DEFAULTS[name]
     env_prefix = name.upper().replace("-", "_")
+    default_timeout = _env_float("LLM_TIMEOUT", 120)
     return ProviderConfig(
         name=name,
         base_url=_env(f"{env_prefix}_BASE_URL", defaults["base_url"]),
         model=_env(f"{env_prefix}_MODEL", defaults["model"]),
+        timeout=_env_float(f"{env_prefix}_TIMEOUT", default_timeout),
     )
 
 

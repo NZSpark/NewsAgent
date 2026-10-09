@@ -44,9 +44,9 @@ def _collect_events(question: str) -> list[dict]:
     return events
 
 
-def _format_events(events: list[dict]) -> str:
+def _format_events(events: list[dict], limit: int = 10) -> str:
     lines = []
-    for ev in events[:20]:
+    for ev in events[:limit]:
         lines.append(
             f"- [{ev['event_id']}] {ev['title']}\n"
             f"  summary: {ev.get('summary') or '(none)'}\n"
@@ -82,6 +82,7 @@ def answer(question: str) -> dict:
             if art.get("url"):
                 sources.append(art["url"])
 
+    # Keep the prompt compact: slow Web providers time out on long contexts.
     user = f"Question: {question}\n\nEvents:\n{_format_events(events)}"
     try:
         result = generate(

@@ -62,11 +62,14 @@ def extract_json(text: str) -> dict:
 
 
 def _call_once(provider: str, messages: list[dict], model: str) -> tuple[str, dict]:
+    from ..config import provider_config
+
     client = make_client(provider)
     resp = client.chat.completions.create(
         model=model,
         messages=messages,  # only system/user/assistant
         temperature=0.2,
+        timeout=provider_config(provider).timeout,
         # NOTE: no `reasoning_effort`, no `developer` role (local providers).
     )
     content = resp.choices[0].message.content or ""
