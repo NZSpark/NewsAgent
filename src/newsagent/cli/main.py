@@ -164,24 +164,43 @@ def _send_generated_report(paths: dict, mode_override: str | None) -> dict:
         full_text_path=paths.get("md"),
         pdf_path=paths.get("pdf"),
     )
-    outcome = send_report(bundle, _wechat_client(), load_recipient(), cfg, source="report_command")
-    return outcome.to_dict()
+    client = None
+    try:
+        client = _wechat_client()
+        outcome = send_report(bundle, client, load_recipient(), cfg, source="report_command")
+        return outcome.to_dict()
+    except Exception as exc:  # noqa: BLE001 - auth/network
+        return {"status": "failed", "errors": [str(exc)]}
+    finally:
+        if client is not None:
+            client.close()
 
 
 def _wechat_client():
-    """Real client is blocked; return the explicit unavailable placeholder."""
-    from ..wechat.client import UnavailableClient
-    return UnavailableClient()
+    """Build the real iLink client from stored credentials."""
+    from ..wechat.credentials import load_account
+    from ..wechat.ilink import ILinkClient
+    account = load_account()
+    if not account:
+        raise RuntimeError("not logged in; run `news wechat login` first")
+    return ILinkClient(account)
 
 
 def cmd_wechat_login(args) -> int:
-    from ..wechat.client import PermanentSendError
-    print(
-        "微信 iLink Bot 登录尚未实现：协议验证被阻塞。\n"
-        "见 doc/wechat_phase0_survey.md。本仓库无法访问 Hermes 源码或真实测试账号。",
-        file=sys.stderr,
-    )
-    return 3
+    from ..wechat.client import WeChatError
+    from ..wechat.login import qr_login
+    try:
+        creds = qr_login()
+    except WeChatError as exc:
+        print(f"登录失败：{exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - network/QR failures
+        print(f"登录失败：{exc}", file=sys.stderr)
+        return 1
+    if not creds:
+        return 1
+    print("下一步：用目标个人微信向 Bot 发一条消息，然后运行 `news wechat bind`。")
+    return 0
 
 
 def cmd_wechat_status(args) -> int:
@@ -199,12 +218,17 @@ def cmd_wechat_status(args) -> int:
 
 
 def cmd_wechat_bind(args) -> int:
-    print(
-        "收件人绑定需要真实 iLink 入站消息轮询，协议验证被阻塞。\n"
-        "见 doc/wechat_phase0_survey.md。",
-        file=sys.stderr,
-    )
-    return 3
+    from ..wechat.client import WeChatError
+    from ..wechat.login import bind_recipient
+    try:
+        recipient = bind_recipient()
+    except WeChatError as exc:
+        print(f"绑定失败：{exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - network failures
+        print(f"绑定失败：{exc}", file=sys.stderr)
+        return 1
+    return 0 if recipient else 1
 
 
 def cmd_wechat_logout(args) -> int:
@@ -244,7 +268,16 @@ def cmd_wechat_send(args) -> int:
         return 1
 
     recipient = load_recipient()
-    outcome = send_report(bundle, _wechat_client(), recipient, cfg, source="manual")
+    client = None
+    try:
+        client = _wechat_client()
+        outcome = send_report(bundle, client, recipient, cfg, source="manual")
+    except Exception as exc:  # noqa: BLE001 - auth/network/input
+        print(f"发送失败：{exc}", file=sys.stderr)
+        return 1
+    finally:
+        if client is not None:
+            client.close()
     _print(outcome.to_dict())
     return 0 if outcome.status == "success" else 1
 
@@ -338,9 +371,9 @@ def build_parser() -> argparse.ArgumentParser:
     # WeChat subcommands (doc/wechat_tasks.md phase 6)
     wp = sub.add_parser("wechat", help="WeChat report delivery")
     wsub = wp.add_subparsers(dest="wechat_command", required=True)
-    wsub.add_parser("login", help="QR login (protocol blocked)").set_defaults(func=cmd_wechat_login)
+    wsub.add_parser("login", help="QR login").set_defaults(func=cmd_wechat_login)
     wsub.add_parser("status", help="show login/binding status").set_defaults(func=cmd_wechat_status)
-    wsub.add_parser("bind", help="bind recipient (protocol blocked)").set_defaults(func=cmd_wechat_bind)
+    wsub.add_parser("bind", help="bind recipient").set_defaults(func=cmd_wechat_bind)
     wsub.add_parser("logout", help="clear local credentials").set_defaults(func=cmd_wechat_logout)
     wsp = wsub.add_parser("send", help="send a report")
     wsp.add_argument("--mode", choices=["summary", "full", "summary_pdf"], default=None)

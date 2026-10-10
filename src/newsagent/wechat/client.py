@@ -24,7 +24,11 @@ class WeChatError(NewsAgentError):
 
 
 class RecoverableSendError(WeChatError):
-    """Network/timeout/temporary server error: eligible for retry (TASK-089)."""
+    """A known transient failure that is safe to retry."""
+
+
+class UncertainSendError(WeChatError):
+    """The remote service may have accepted the message; automatic retry is unsafe."""
 
 
 class PermanentSendError(WeChatError):

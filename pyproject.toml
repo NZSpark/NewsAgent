@@ -21,6 +21,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 pdf = ["weasyprint>=62"]
+# Real iLink Bot support. cryptography is required for media encryption
+# (AES-128-ECB) and certifi for the Tencent CA bundle; qrcode renders the
+# login QR in the terminal. Text-only sends work without cryptography.
+wechat = ["cryptography>=42", "certifi>=2023", "qrcode>=7.4"]
 
 [project.scripts]
 news = "newsagent.cli.main:main"

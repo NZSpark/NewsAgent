@@ -13,6 +13,7 @@ from newsagent.wechat.client import (
     PermanentSendError,
     RecoverableSendError,
     SendResult,
+    UncertainSendError,
     number_chunks,
     split_text,
 )
@@ -267,6 +268,86 @@ def test_summary_pdf_partial_when_file_fails(wechat_dir, tmp_path):
     out = send_report(bundle, client, {"id": "x"}, cfg)
     assert out.status == "partial"
     assert out.summary_ok and not out.pdf_ok
+
+
+def test_uncertain_send_is_not_retried(wechat_dir):
+    class UncertainClient:
+        calls = 0
+
+        def send_text(self, recipient, text):
+            self.calls += 1
+            raise UncertainSendError("connection lost after request was submitted")
+
+        def send_file(self, recipient, path, caption=""):
+            raise AssertionError("file send should not be reached")
+
+    client = UncertainClient()
+    cfg = WeChatConfig(default_mode="summary", retry=RetryConfig(max_retries=3, interval_seconds=0))
+    out = send_report(ReportBundle("R", "SUMMARY", None, None), client, {"id": "x"}, cfg)
+    assert out.status == "uncertain"
+    assert client.calls == 1
+    assert out.uncertain_parts == ["summary"]
+
+
+def test_automated_success_is_not_resent(wechat_dir):
+    client = _MockClient()
+    bundle = ReportBundle("R", "SUMMARY", None, None)
+    cfg = WeChatConfig(default_mode="summary", retry=RetryConfig(max_retries=0, interval_seconds=0))
+    first = send_report(bundle, client, {"id": "x"}, cfg, source="cron")
+    second = send_report(bundle, client, {"id": "x"}, cfg, source="cron")
+    assert first.status == "success"
+    assert second.status == "success" and second.duplicate_skipped
+    assert len(client.sent) == 1
+
+
+def test_automated_summary_pdf_retry_resumes_pdf_only(wechat_dir, tmp_path):
+    pdf = tmp_path / "r.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    bundle = ReportBundle("R", "SUMMARY", None, pdf)
+    cfg = WeChatConfig(default_mode="summary_pdf", retry=RetryConfig(max_retries=0, interval_seconds=0))
+    first_client = _MockClient(file_fail_times=99)
+    first = send_report(bundle, first_client, {"id": "x"}, cfg, source="cron")
+    assert first.status == "partial" and first.summary_ok and not first.pdf_ok
+    assert [kind for kind, _ in first_client.sent] == ["text"]
+
+    retry_client = _MockClient()
+    resumed = send_report(bundle, retry_client, {"id": "x"}, cfg, source="cron")
+    assert resumed.status == "success" and resumed.summary_ok and resumed.pdf_ok
+    assert [kind for kind, _ in retry_client.sent] == ["file"]
+
+
+def test_uncertain_automated_send_blocks_next_run(wechat_dir):
+    class UncertainClient:
+        calls = 0
+
+        def send_text(self, recipient, text):
+            self.calls += 1
+            raise UncertainSendError("timeout with uncertain server acceptance")
+
+        def send_file(self, recipient, path, caption=""):
+            raise AssertionError("file send should not be reached")
+
+    bundle = ReportBundle("R", "SUMMARY", None, None)
+    cfg = WeChatConfig(default_mode="summary", retry=RetryConfig(max_retries=0, interval_seconds=0))
+    first_client = UncertainClient()
+    first = send_report(bundle, first_client, {"id": "x"}, cfg, source="scheduler")
+    retry_client = _MockClient()
+    second = send_report(bundle, retry_client, {"id": "x"}, cfg, source="scheduler")
+    assert first.status == "uncertain"
+    assert second.status == "uncertain"
+    assert second.errors and "automatic resend was blocked" in second.errors[0]
+    assert first_client.calls == 1
+    assert retry_client.sent == []
+
+
+def test_manual_send_can_deliberately_resend_same_report(wechat_dir):
+    client = _MockClient()
+    bundle = ReportBundle("R", "SUMMARY", None, None)
+    cfg = WeChatConfig(default_mode="summary", retry=RetryConfig(max_retries=0, interval_seconds=0))
+    first = send_report(bundle, client, {"id": "x"}, cfg, source="manual")
+    second = send_report(bundle, client, {"id": "x"}, cfg, source="manual")
+    assert first.status == second.status == "success"
+    assert len(client.sent) == 2
 
 
 def test_retry_recovers(wechat_dir):
