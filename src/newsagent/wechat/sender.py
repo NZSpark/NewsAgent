@@ -18,8 +18,6 @@ from .client import (
     SendResult,
     UncertainSendError,
     WeChatClient,
-    number_chunks,
-    split_text,
 )
 from .config import WeChatConfig, config_dir
 from .reports import ReportBundle
@@ -27,6 +25,10 @@ from .reports import ReportBundle
 log = get_logger("wechat.sender")
 
 STATE_FILE = "delivery-state.json"  # TASK-099..TASK-104
+
+# A summary is sent as a single message. Cap it below iLink's ~2048 chunk
+# limit so it never splits; longer summaries are truncated with an ellipsis.
+MAX_SUMMARY_CHARS = 1800
 
 
 @dataclass
@@ -103,12 +105,7 @@ def _idempotency_key(bundle: ReportBundle, mode: str, recipient: dict) -> str:
         # Do not persist personal IDs in plaintext in delivery-state.json.
         "recipient_sha256": hashlib.sha256(recipient_id.encode("utf-8")).hexdigest(),
     }
-    if mode in {"summary", "summary_pdf"}:
-        identity["summary"] = hashlib.sha256((bundle.summary or "").encode("utf-8")).hexdigest()
-    if mode == "full":
-        identity["full_text"] = _file_digest(bundle.full_text_path)
-    if mode == "summary_pdf":
-        identity["pdf"] = _file_digest(bundle.pdf_path)
+    identity["summary"] = hashlib.sha256((bundle.summary or "").encode("utf-8")).hexdigest()
     serialized = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
@@ -225,9 +222,20 @@ def _send_part(part: str, fn, retry, outcome: DeliveryOutcome) -> SendResult | N
 
 
 def _send_summary(client: WeChatClient, recipient: dict, bundle: ReportBundle, retry, outcome: DeliveryOutcome) -> None:
+    """Send the summary as ONE message. Never split (design revision 2026-10-10).
+
+    iLink chunks text at ~2048 chars; the summary is well under that, and
+    multi-message splitting is a poor WeChat reading experience. If the summary
+    somehow exceeds the limit, send the first chunk only and note the truncation
+    rather than splitting into several messages.
+    """
     text = (bundle.summary or "").strip()
     if not text:
         raise PermanentSendError("summary is empty; aborting (TASK-073)")
+    if len(text) > MAX_SUMMARY_CHARS:
+        log.warning("summary is %d chars; truncating to %d", len(text), MAX_SUMMARY_CHARS)
+        # Reserve one char for the ellipsis so the result never exceeds the limit.
+        text = text[: MAX_SUMMARY_CHARS - 1].rstrip() + "…"
 
     def _do() -> SendResult:
         result = client.send_text(recipient, text)
@@ -237,49 +245,6 @@ def _send_summary(client: WeChatClient, recipient: dict, bundle: ReportBundle, r
 
     _send_part("summary", _do, retry, outcome)
     outcome.summary_ok = True
-
-
-def _send_full(client: WeChatClient, recipient: dict, bundle: ReportBundle, cfg: WeChatConfig, retry, outcome: DeliveryOutcome) -> None:
-    path = bundle.full_text_path
-    if path is None:
-        raise PermanentSendError("no full report text available")
-    text = path.read_text(encoding="utf-8", errors="replace")
-    if not text.strip():
-        raise PermanentSendError(f"full report is empty: {path}")
-    chunks = split_text(text) if cfg.split_long_text else [text]
-    chunks = number_chunks(chunks, title=bundle.report_id)
-    for idx, chunk in enumerate(chunks, 1):
-        part = f"full:{idx}/{len(chunks)}"
-        if part in outcome.completed_parts:
-            continue
-
-        def _do(c=chunk) -> SendResult:
-            result = client.send_text(recipient, c)
-            if not result.ok:
-                raise RecoverableSendError(result.detail or "send_text returned not ok")
-            return result
-
-        _send_part(part, _do, retry, outcome)
-    outcome.full_ok = True
-
-
-def _send_summary_pdf(client: WeChatClient, recipient: dict, bundle: ReportBundle, retry, outcome: DeliveryOutcome) -> None:
-    """Send summary then PDF, checkpointing each part to support safe resume."""
-    if bundle.pdf_path is None:
-        raise PermanentSendError("no PDF to send")
-    _send_summary(client, recipient, bundle, retry, outcome)
-    if "pdf" in outcome.completed_parts:
-        outcome.pdf_ok = True
-        return
-
-    def _do() -> SendResult:
-        result = client.send_file(recipient, bundle.pdf_path, caption=bundle.report_id)
-        if not result.ok:
-            raise RecoverableSendError(result.detail or "send_file returned not ok")
-        return result
-
-    _send_part("pdf", _do, retry, outcome)
-    outcome.pdf_ok = True
 
 
 def _send_report_unlocked(
@@ -336,10 +301,6 @@ def _send_report_unlocked(
         if outcome.status == "pending":
             if mode == "summary":
                 _send_summary(client, recipient, bundle, cfg.retry, outcome)
-            elif mode == "full":
-                _send_full(client, recipient, bundle, cfg, cfg.retry, outcome)
-            elif mode == "summary_pdf":
-                _send_summary_pdf(client, recipient, bundle, cfg.retry, outcome)
             else:
                 raise PermanentSendError(f"unknown mode {mode!r}")
             outcome.status = "success"
@@ -351,10 +312,10 @@ def _send_report_unlocked(
         outcome.status = "uncertain"
     except PermanentSendError as exc:
         outcome.errors.append(str(exc))
-        outcome.status = "partial" if outcome.completed_parts and mode == "summary_pdf" else "failed"
+        outcome.status = "failed"
     except RecoverableSendError as exc:
         outcome.errors.append(str(exc))
-        outcome.status = "partial" if outcome.summary_ok and mode == "summary_pdf" else "failed"
+        outcome.status = "failed"
     finally:
         outcome.finished_at = _now()
         # Checkpoint writes before each request fail closed. Final logging must

@@ -50,7 +50,8 @@ def wechat_dir(tmp_path, monkeypatch):
 
 def test_default_config():
     cfg = WeChatConfig()
-    assert cfg.default_mode == "summary_pdf"
+    # Design revision 2026-10-10: only the summary text is sent.
+    assert cfg.default_mode == "summary"
     assert cfg.retry.max_retries == 3
     assert cfg.retry.interval_seconds == 10
 
@@ -75,15 +76,25 @@ def test_invalid_time_rejected():
 
 
 def test_mode_precedence():
-    cfg = WeChatConfig(default_mode="summary_pdf")
-    assert cfg.resolve_mode(cli_mode="full") == "full"
+    cfg = WeChatConfig(default_mode="summary")
+    assert cfg.resolve_mode(cli_mode="summary") == "summary"
     assert cfg.resolve_mode(schedule_mode="summary") == "summary"
-    assert cfg.resolve_mode() == "summary_pdf"
+    assert cfg.resolve_mode() == "summary"
+
+
+def test_removed_modes_rejected():
+    # full / summary_pdf were removed by the design revision.
+    with pytest.raises(WeChatConfigError):
+        WeChatConfig(default_mode="summary_pdf")
+    with pytest.raises(WeChatConfigError):
+        WeChatConfig(default_mode="full")
+    with pytest.raises(WeChatConfigError):
+        WeChatConfig().resolve_mode(cli_mode="full")
 
 
 def test_schedule_mode_inherits_default():
-    cfg = WeChatConfig(default_mode="full")
-    assert cfg.resolve_mode(schedule_mode=None) == "full"
+    cfg = WeChatConfig(default_mode="summary")
+    assert cfg.resolve_mode(schedule_mode=None) == "summary"
 
 
 def test_parse_config_section():
@@ -94,7 +105,7 @@ def test_parse_config_section():
 
 def test_load_missing_config_yields_defaults(wechat_dir):
     cfg = load_config(wechat_dir / "nonexistent.json")
-    assert cfg.default_mode == "summary_pdf"
+    assert cfg.default_mode == "summary"
 
 
 def test_load_corrupt_config_raises(wechat_dir):
@@ -177,28 +188,10 @@ def test_resolve_summary(tmp_path):
     assert b.summary == "SUMMARY"
 
 
-def test_resolve_full(tmp_path):
-    d = _write_report_set(tmp_path)
-    b = resolve_report("full", directory=d)
-    assert b.full_text_path is not None and b.full_text_path.exists()
-
-
-def test_resolve_summary_pdf(tmp_path):
-    d = _write_report_set(tmp_path)
-    b = resolve_report("summary_pdf", directory=d)
-    assert b.pdf_path is not None and b.summary == "SUMMARY"
-
-
-def test_pdf_missing_stops_summary_pdf(tmp_path):
-    d = _write_report_set(tmp_path, with_pdf=False)
-    with pytest.raises(ReportInputError):
-        resolve_report("summary_pdf", directory=d)
-
-
-def test_summary_missing_stops_whole_send(tmp_path):
+def test_summary_missing_raises(tmp_path):
     d = _write_report_set(tmp_path, with_summary=False)
     with pytest.raises(ReportInputError):
-        resolve_report("summary_pdf", directory=d)
+        resolve_report("summary", directory=d)
 
 
 def test_no_manifest_raises(tmp_path):
@@ -206,11 +199,12 @@ def test_no_manifest_raises(tmp_path):
         resolve_report("summary", directory=tmp_path)
 
 
-def test_invalid_pdf_rejected(tmp_path):
-    pdf = tmp_path / "x.pdf"
-    pdf.write_bytes(b"not a pdf")
+def test_removed_modes_rejected_in_resolver(tmp_path):
+    d = _write_report_set(tmp_path)
     with pytest.raises(ReportInputError):
-        resolve_report("summary_pdf", file=pdf, directory=tmp_path)
+        resolve_report("full", directory=d)
+    with pytest.raises(ReportInputError):
+        resolve_report("summary_pdf", directory=d)
 
 
 # --------------------- sending (TASK-147/148/149/150) --------------------- #
@@ -249,25 +243,17 @@ def test_send_summary_empty_fails(wechat_dir):
     assert out.status == "failed"
 
 
-def test_send_full_splits(wechat_dir, tmp_path):
-    full = tmp_path / "full.md"
-    full.write_text("x" * 5000, encoding="utf-8")
-    bundle = ReportBundle("R", None, full, None)
+def test_summary_is_sent_as_single_message(wechat_dir):
+    # The summary is never split into multiple messages (design revision).
+    long_summary = "中" * 4000
+    bundle = ReportBundle("R", long_summary, None, None)
     client = _MockClient()
-    out = send_report(bundle, client, {"id": "x"}, WeChatConfig(default_mode="full"))
-    assert out.status == "success" and out.full_ok
-    assert len(client.sent) >= 3
-
-
-def test_summary_pdf_partial_when_file_fails(wechat_dir, tmp_path):
-    pdf = tmp_path / "r.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-    bundle = ReportBundle("R", "SUMMARY", None, pdf)
-    client = _MockClient(file_fail_times=99)  # always fail
-    cfg = WeChatConfig(default_mode="summary_pdf", retry=RetryConfig(max_retries=0, interval_seconds=0))
-    out = send_report(bundle, client, {"id": "x"}, cfg)
-    assert out.status == "partial"
-    assert out.summary_ok and not out.pdf_ok
+    out = send_report(bundle, client, {"id": "x"}, WeChatConfig(default_mode="summary"))
+    assert out.status == "success" and out.summary_ok
+    assert len(client.sent) == 1  # exactly one message
+    sent_text = client.sent[0][1]
+    assert len(sent_text) <= 1800
+    assert sent_text.endswith("…")
 
 
 def test_uncertain_send_is_not_retried(wechat_dir):
@@ -300,20 +286,24 @@ def test_automated_success_is_not_resent(wechat_dir):
     assert len(client.sent) == 1
 
 
-def test_automated_summary_pdf_retry_resumes_pdf_only(wechat_dir, tmp_path):
-    pdf = tmp_path / "r.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-    bundle = ReportBundle("R", "SUMMARY", None, pdf)
-    cfg = WeChatConfig(default_mode="summary_pdf", retry=RetryConfig(max_retries=0, interval_seconds=0))
-    first_client = _MockClient(file_fail_times=99)
-    first = send_report(bundle, first_client, {"id": "x"}, cfg, source="cron")
-    assert first.status == "partial" and first.summary_ok and not first.pdf_ok
-    assert [kind for kind, _ in first_client.sent] == ["text"]
+def test_uncertain_automated_send_blocks_resend(wechat_dir):
+    class UncertainClient:
+        calls = 0
 
-    retry_client = _MockClient()
-    resumed = send_report(bundle, retry_client, {"id": "x"}, cfg, source="cron")
-    assert resumed.status == "success" and resumed.summary_ok and resumed.pdf_ok
-    assert [kind for kind, _ in retry_client.sent] == ["file"]
+        def send_text(self, recipient, text):
+            self.calls += 1
+            raise UncertainSendError("timeout with uncertain server acceptance")
+
+        def send_file(self, recipient, path, caption=""):
+            raise AssertionError("file send should not be reached")
+
+    bundle = ReportBundle("R", "SUMMARY", None, None)
+    cfg = WeChatConfig(default_mode="summary", retry=RetryConfig(max_retries=0, interval_seconds=0))
+    first = send_report(bundle, UncertainClient(), {"id": "x"}, cfg, source="cron")
+    assert first.status == "uncertain"
+    # A resumed automated run must not blindly resend an uncertain summary.
+    second = send_report(bundle, _MockClient(), {"id": "x"}, cfg, source="cron")
+    assert second.status == "uncertain"
 
 
 def test_uncertain_automated_send_blocks_next_run(wechat_dir):

@@ -365,7 +365,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated output formats: md,html,pdf (default: md)",
     )
     sp.add_argument("--send-wechat", action="store_true", help="send the generated report via WeChat")
-    sp.add_argument("--wechat-mode", choices=["summary", "full", "summary_pdf"], default=None)
+    sp.add_argument("--wechat-mode", choices=["summary"], default=None)
     sp.set_defaults(func=cmd_report)
 
     # WeChat subcommands (doc/wechat_tasks.md phase 6)
@@ -376,8 +376,8 @@ def build_parser() -> argparse.ArgumentParser:
     wsub.add_parser("bind", help="bind recipient").set_defaults(func=cmd_wechat_bind)
     wsub.add_parser("logout", help="clear local credentials").set_defaults(func=cmd_wechat_logout)
     wsp = wsub.add_parser("send", help="send a report")
-    wsp.add_argument("--mode", choices=["summary", "full", "summary_pdf"], default=None)
-    wsp.add_argument("--file", default=None, help="report file (PDF for summary_pdf)")
+    wsp.add_argument("--mode", choices=["summary"], default=None)
+    wsp.add_argument("--file", default=None, help="path to a plain-text summary file")
     wsp.set_defaults(func=cmd_wechat_send)
 
     sp = sub.add_parser("index", help="build event embeddings (TASK-044)")

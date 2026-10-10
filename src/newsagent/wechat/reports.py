@@ -14,8 +14,6 @@ from ..logging_setup import NewsAgentError, get_logger
 
 log = get_logger("wechat.reports")
 
-MAX_PDF_BYTES = 50 * 1024 * 1024  # TASK-062
-
 
 class ReportInputError(NewsAgentError):
     """Report selection/pairing/validation failed (no retry)."""
@@ -23,12 +21,17 @@ class ReportInputError(NewsAgentError):
 
 @dataclass(frozen=True)
 class ReportBundle:
-    """A consistent set of files for one report (TASK-049)."""
+    """The summary to send for one report (TASK-049, revised 2026-10-10).
+
+    `full_text_path` / `pdf_path` are retained for backward compatibility with
+    callers, but only `summary` is used now that PDF and full-text sending were
+    removed.
+    """
 
     report_id: str
     summary: str | None
-    full_text_path: Path | None
-    pdf_path: Path | None
+    full_text_path: Path | None = None
+    pdf_path: Path | None = None
     manifest_path: Path | None = None
 
 
@@ -71,14 +74,9 @@ def latest_manifest(directory: Path | None = None) -> tuple[Path, dict]:
 
 
 def _bundle_from_manifest(path: Path, data: dict) -> ReportBundle:
-    files = data.get('files') or {}
-    pdf = Path(files['pdf']) if files.get('pdf') else None
-    md = Path(files['md']) if files.get('md') else None
     return ReportBundle(
         report_id=str(data.get('report_id', path.stem)),
         summary=data.get('summary'),
-        full_text_path=md,
-        pdf_path=pdf,
         manifest_path=path,
     )
 
@@ -95,117 +93,34 @@ def _check_readable(path: Path, what: str) -> None:
         raise ReportInputError(f'{what} not readable: {path}: {exc}') from exc
 
 
-def _validate_pdf(path: Path) -> None:
-    """TASK-060/TASK-061/TASK-062: existence, magic bytes, size limit."""
-    _check_readable(path, 'PDF')
-    size = path.stat().st_size
-    if size == 0:
-        raise ReportInputError(f'PDF is empty: {path}')
-    if size > MAX_PDF_BYTES:
-        raise ReportInputError(
-            f'PDF too large ({size} bytes > {MAX_PDF_BYTES}): {path}'
-        )
-    with path.open('rb') as fh:
-        if fh.read(5) != b'%PDF-':
-            raise ReportInputError(f'not a valid PDF (missing %PDF- header): {path}')
-
-
 def resolve_report(
-    mode: str,
+    mode: str = 'summary',
     file: Path | None = None,
     directory: Path | None = None,
 ) -> ReportBundle:
-    """Resolve inputs for a send mode (TASK-053 ~ TASK-059).
+    """Resolve the summary text to send (TASK-053 ~ TASK-059, revised).
 
-    - summary: uses the latest manifest's stored summary text.
-    - full: needs the Markdown full text.
-    - summary_pdf: needs PDF + a summary from the SAME report.
+    Design revision (2026-10-10): only `summary` mode remains. PDF attachments
+    and full-text (multi-message) sending were removed because they read poorly
+    in WeChat.
     """
     directory = directory or output_dir()
-
-    if mode == 'summary':
-        if file is not None:
-            # A manually-specified summary file must be plain text.
-            _check_readable(file, 'summary file')
-            text = file.read_text(encoding='utf-8', errors='replace').strip()
-            if not text:
-                raise ReportInputError(f'summary file is empty: {file}')
-            return ReportBundle(report_id=file.stem, summary=text, full_text_path=None, pdf_path=None)
-        _, data = latest_manifest(directory)
-        summary = (data.get('summary') or '').strip()
-        if not summary:
-            raise ReportInputError('latest report has no summary text')
-        return _bundle_from_manifest(_, data)
-
-    if mode == 'full':
-        path = file
-        bundle = None
-        if path is None:
-            _, data = latest_manifest(directory)
-            bundle = _bundle_from_manifest(_, data)
-            path = bundle.full_text_path
-        if path is None:
-            raise ReportInputError('no full-text report available')
-        _check_readable(path, 'full report')
-        return ReportBundle(
-            report_id=(bundle.report_id if bundle else path.stem),
-            summary=None,
-            full_text_path=path,
-            pdf_path=None,
+    if mode != 'summary':
+        raise ReportInputError(
+            f"unsupported send mode {mode!r}; only 'summary' is supported "
+            "(PDF/full modes were removed)"
         )
 
-    if mode == 'summary_pdf':
-        if file is not None:
-            # TASK-054/TASK-057: --file is the PDF; locate the matching summary.
-            _validate_pdf(file)
-            manifest = _find_manifest_for_pdf(file, directory)
-            if manifest is None:
-                raise ReportInputError(
-                    f'cannot find a report manifest matching {file.name}; '
-                    'refusing to pair an arbitrary summary (TASK-058/TASK-059)'
-                )
-            _, data = manifest
-            bundle = _bundle_from_manifest(_, data)
-            if bundle.pdf_path != file and not _same_file(bundle.pdf_path, file):
-                raise ReportInputError(
-                    f'manifest {_} does not reference {file}' 
-                )
-        else:
-            _, data = latest_manifest(directory)
-            bundle = _bundle_from_manifest(_, data)
-        if bundle.pdf_path is None:
-            raise ReportInputError('latest report has no PDF (TASK-064: no fallback)')
-        _validate_pdf(bundle.pdf_path)
-        summary = (bundle.summary or '').strip()
-        if not summary:
-            # TASK-065: PDF present but summary missing => stop the whole send.
-            raise ReportInputError(
-                'PDF exists but its summary is missing; refusing to send PDF alone'
-            )
-        return bundle
+    if file is not None:
+        # A manually-specified summary file must be plain text.
+        _check_readable(file, 'summary file')
+        text = file.read_text(encoding='utf-8', errors='replace').strip()
+        if not text:
+            raise ReportInputError(f'summary file is empty: {file}')
+        return ReportBundle(report_id=file.stem, summary=text, full_text_path=None, pdf_path=None)
 
-    raise ReportInputError(f'unknown send mode: {mode!r}')
-
-
-def _same_file(a: Path | None, b: Path) -> bool:
-    if a is None:
-        return False
-    try:
-        return a.resolve() == b.resolve()
-    except OSError:
-        return False
-
-
-def _find_manifest_for_pdf(pdf: Path, directory: Path) -> tuple[Path, dict] | None:
-    target = pdf.resolve()
-    for _, path, data in _manifests(directory):
-        files = data.get('files') or {}
-        ref = files.get('pdf')
-        if not ref:
-            continue
-        try:
-            if Path(ref).resolve() == target:
-                return path, data
-        except OSError:
-            continue
-    return None
+    _, data = latest_manifest(directory)
+    summary = (data.get('summary') or '').strip()
+    if not summary:
+        raise ReportInputError('latest report has no summary text')
+    return _bundle_from_manifest(_, data)

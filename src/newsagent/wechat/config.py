@@ -16,9 +16,11 @@ from ..logging_setup import NewsAgentError, get_logger
 
 log = get_logger("wechat.config")
 
-# TASK-020: canonical send modes.
-SEND_MODES = ("summary", "full", "summary_pdf")
-DEFAULT_MODE = "summary_pdf"  # TASK-021
+# Design revision (2026-10-10): only the summary text is sent.
+# PDF attachments read poorly in WeChat, and splitting long text into multiple
+# messages is also a poor experience. `full` / `summary_pdf` were removed.
+SEND_MODES = ("summary",)
+DEFAULT_MODE = "summary"
 
 # TASK-023: scheduled action values.
 SCHEDULE_ACTIONS = ("generate_and_send", "send_existing")
@@ -82,7 +84,6 @@ class WeChatConfig:
     enabled: bool = True
     default_mode: str = DEFAULT_MODE
     retry: RetryConfig = field(default_factory=RetryConfig)
-    split_long_text: bool = True
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
 
     def __post_init__(self) -> None:
@@ -136,7 +137,6 @@ def parse_config(raw: dict | None) -> WeChatConfig:
         enabled=bool(section.get("enabled", True)),
         default_mode=str(section.get("default_mode", DEFAULT_MODE)),
         retry=retry,
-        split_long_text=bool((section.get("message", {}) or {}).get("split_long_text", True)),
         schedule=schedule,
     )
 
