@@ -237,12 +237,13 @@ WeasyPrint 在部分操作系统上还需要额外的系统库和可用字体，
 # 查看账号、绑定及投递配置状态（脱敏）
 .venv/bin/news wechat status
 
-# 生成日报，并显式发送摘要
+# 生成日报，并显式发送 md 正文（默认格式）
 .venv/bin/news report --hours 24 --formats md --send-wechat
 
-# 发送已有摘要，不重新生成报告
-.venv/bin/news wechat send --mode summary
-.venv/bin/news wechat send --mode summary --file /absolute/path/to/summary.txt
+# 发送已有报告，不重新生成
+.venv/bin/news wechat send                      # 默认 md 正文
+.venv/bin/news wechat send --mode pdf           # PDF 附件
+.venv/bin/news wechat send --mode html --file /absolute/path/to/report.html
 
 # 清除本地登录凭据和收件人绑定
 .venv/bin/news wechat logout
@@ -250,9 +251,13 @@ WeasyPrint 在部分操作系统上还需要额外的系统库和可用字体，
 
 ### 当前行为与安全边界
 
-- 当前只支持 `summary` 单条文本模式。摘要超过 1800 个字符时会截断并附省略号；不会拆成多条消息，也不会通过此模式发送 PDF 附件。
+- 支持三种发送格式，默认 `md`：
+  - `md`（默认）：发送 Markdown 报告正文；超过约 2000 字符时按段落拆成多条、编号 `（1/N）` 后依次发送。
+  - `html`：将 HTML 报告作为文件附件发送。
+  - `pdf`：将 PDF 报告作为文件附件发送。
+  指定的格式若在报告中不存在（例如最新报告没有 PDF），发送会明确失败并提示重新生成，不会静默降级为其它格式。
 - `news report` 默认只生成报告；只有显式传入 `--send-wechat` 才会尝试发送。报告生成失败时不会继续发送。
-- `news wechat bind` 等待入站消息，并保存发件人标识和上下文。请确认绑定的是预期的个人微信账号。`--file` 应指向纯文本摘要文件。
+- `news wechat bind` 等待入站消息，并保存发件人标识和上下文。请确认绑定的是预期的个人微信账号。`--file` 必须与 `--mode` 匹配（`.md`/`.html`/`.pdf`）。
 - 默认配置目录为 `~/.newsagent/wechat/`，可通过 `NEWSAGENT_WECHAT_DIR` 更改。目录在 POSIX 系统上使用 `0700` 权限，敏感文件使用 `0600` 权限；不要提交 `account.json`、`recipient.json`、`sync.json`、`delivery-state.json` 或真实令牌。
 - 默认失败重试配置为最多 3 次、间隔 10 秒。网络超时可能导致送达状态不确定，重发前请检查接收端和 `delivery-state.json`，避免重复消息。
 - 定时配置不会启动内置常驻的微信调度器，也不会自动安装系统任务。用户需自行配置 macOS `launchd` 或 Linux `cron`，并使用绝对路径和日志。模板和说明见 `doc/templates/` 及 `doc/wechat_schedule_templates.md`。
@@ -275,13 +280,13 @@ WeasyPrint 在部分操作系统上还需要额外的系统库和可用字体，
 | `news ask "问题"` | 基于本地事件回答问题 | 问题文本 |
 | `news semantic-cluster` | 使用 LLM 对规则聚类结果进行语义合并 | `--hours H`，默认 48 |
 | `news research` | 研究指定事件或筛选出的重要事件 | 可选 `EVENT_ID`；`--limit N`，默认 3；`--min-importance X`，默认 0.6；`--live` 启用实时抓取 fallback |
-| `news report` | 生成 Markdown、HTML 或 PDF 日报/周报；可选发送摘要到微信 | `--hours H`，默认 24；`--formats md,html,pdf`，默认 `md`；`--send-wechat` 显式发送；`--wechat-mode summary` |
+| `news report` | 生成 Markdown、HTML 或 PDF 日报/周报；可选发送到微信 | `--hours H`，默认 24；`--formats md,html,pdf`，默认 `md`；`--send-wechat` 显式发送；`--wechat-mode md,html,pdf`，默认 `md` |
 | `news index` | 建立文章和事件的向量索引 | `--limit N`，默认 500 |
 | `news semantic-search "查询"` | 对事件执行语义搜索 | `--limit N`，默认 20；`--articles` 改为搜索文章 |
 | `news wechat login` | 通过二维码登录 iLink Bot | 需安装 `.[wechat]` 并可访问 iLink 服务 |
 | `news wechat status` | 查看账号、绑定及投递配置的脱敏状态 | 无 |
 | `news wechat bind` | 等待目标个人微信向 Bot 发消息并保存绑定 | 需先登录 |
-| `news wechat send` | 发送已有摘要，不生成新报告 | `--mode summary`；可用 `--file PATH` 指定纯文本摘要 |
+| `news wechat send` | 发送已有报告，不生成新报告 | `--mode md,html,pdf`，默认 `md`；可用 `--file PATH` 指定对应格式的文件 |
 | `news wechat logout` | 清除本地账号凭据和收件人绑定 | 不删除报告文件 |
 
 ### 常用示例

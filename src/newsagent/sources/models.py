@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 # Category -> parser type heuristics
 PARSER_BY_HOST: dict[str, str] = {
     "arxiv.org": "rss",
+    "huggingface.co/papers": "hf_papers",  # paperswithcode.com redirects here
+    "paperswithcode.com": "hf_papers",
     "huggingface.co": "rss",
     "news.ycombinator.com": "api",
     "github.com": "html",

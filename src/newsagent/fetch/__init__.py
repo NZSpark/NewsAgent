@@ -6,6 +6,7 @@ import httpx
 from ..config import get_config
 from ..logging_setup import FetchError, get_logger
 from ..sources.models import ArticleCandidate, Source
+from .hf_papers import fetch_hf_papers
 from .html import fetch_html
 from .rss import fetch_rss
 
@@ -29,6 +30,8 @@ def fetch(source: Source, client: httpx.Client | None = None) -> list[ArticleCan
     try:
         if source.parser_type == "rss":
             return fetch_rss(source, client, cfg.fetch_timeout)
+        if source.parser_type == "hf_papers":
+            return fetch_hf_papers(source, client, cfg.fetch_timeout)
         if source.parser_type == "api":
             # API parsers live in sources/parsers; fall back to RSS for now.
             try:
