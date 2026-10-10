@@ -13,7 +13,7 @@
 
 报告生成失败时**不发送、不回退旧报告**（TASK-126）。发送已有报告时**不隐式生成报告或 PDF**（TASK-127）。
 
-模式覆盖：默认继承全局 `default_mode`（`summary_pdf`），可用 `--wechat-mode` 临时覆盖（TASK-128）。
+发送格式：默认继承全局 `default_mode`（`md`，即发送 Markdown 正文；`html`/`pdf` 则作为附件发送），可用 `--wechat-mode` 临时覆盖（TASK-128）。
 
 ## 2. 公共要求（TASK-137 ~ TASK-142）
 

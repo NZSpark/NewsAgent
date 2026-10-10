@@ -1,5 +1,7 @@
 # NewsAgent 微信报告输出功能设计文档
 
+> **修订说明（2026-10-11）：** 发送模型已从旧的“摘要 / 完整文本 / 摘要加 PDF”三种模式，改为按**报告格式**发送：`md`（默认，发送 Markdown 正文，超长自动分条）、`html`（HTML 附件）、`pdf`（PDF 附件）。下文第 1.1 节及其后关于旧模式的描述仅作历史设计参考，实际接口以 `src/newsagent/wechat/config.py` 的 `SEND_MODES = ("md", "html", "pdf")` 与 `DEFAULT_MODE = "md"` 为准。
+
 > 文档状态：需求与技术设计基线  
 > 适用项目：NewsAgent  
 > 目标：将 NewsAgent 已经生成的新闻报告发送到指定的个人微信，支持手动发送和操作系统定时推送。  

@@ -16,11 +16,15 @@ from ..logging_setup import NewsAgentError, get_logger
 
 log = get_logger("wechat.config")
 
-# Design revision (2026-10-10): only the summary text is sent.
-# PDF attachments read poorly in WeChat, and splitting long text into multiple
-# messages is also a poor experience. `full` / `summary_pdf` were removed.
-SEND_MODES = ("summary",)
-DEFAULT_MODE = "summary"
+# Send formats (restored 2026-10-11). Each value names the report artifact to
+# deliver as one WeChat message: `md` sends the markdown text (split into
+# chunks if it exceeds the message limit), `html` / `pdf` send the file as an
+# attachment. The default is the markdown document.
+SEND_MODES = ("md", "html", "pdf")
+DEFAULT_MODE = "md"
+
+# Formats delivered as a file attachment rather than as inline text.
+FILE_MODES = ("html", "pdf")
 
 # TASK-023: scheduled action values.
 SCHEDULE_ACTIONS = ("generate_and_send", "send_existing")

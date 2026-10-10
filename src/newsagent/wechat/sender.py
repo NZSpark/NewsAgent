@@ -1,4 +1,4 @@
-"""Send service: three modes + retry + status (TASK-071 ~ TASK-106)."""
+"""Send service: multi-format delivery + retry + status (TASK-071 ~ TASK-106)."""
 from __future__ import annotations
 
 import hashlib
@@ -19,6 +19,7 @@ from .client import (
     UncertainSendError,
     WeChatClient,
 )
+from .client import MAX_TEXT_LEN, number_chunks, split_text
 from .config import WeChatConfig, config_dir
 from .reports import ReportBundle
 
@@ -26,9 +27,8 @@ log = get_logger("wechat.sender")
 
 STATE_FILE = "delivery-state.json"  # TASK-099..TASK-104
 
-# A summary is sent as a single message. Cap it below iLink's ~2048 chunk
-# limit so it never splits; longer summaries are truncated with an ellipsis.
-MAX_SUMMARY_CHARS = 1800
+# Markdown reports longer than this are split across numbered messages.
+MAX_TEXT_CHARS = MAX_TEXT_LEN
 
 
 @dataclass
@@ -221,30 +221,53 @@ def _send_part(part: str, fn, retry, outcome: DeliveryOutcome) -> SendResult | N
     return result
 
 
-def _send_summary(client: WeChatClient, recipient: dict, bundle: ReportBundle, retry, outcome: DeliveryOutcome) -> None:
-    """Send the summary as ONE message. Never split (design revision 2026-10-10).
+def _send_text(client: WeChatClient, recipient: dict, text: str, retry, outcome: DeliveryOutcome) -> None:
+    """Send markdown text, split into numbered messages when it exceeds the limit.
 
-    iLink chunks text at ~2048 chars; the summary is well under that, and
-    multi-message splitting is a poor WeChat reading experience. If the summary
-    somehow exceeds the limit, send the first chunk only and note the truncation
-    rather than splitting into several messages.
+    Restored 2026-10-11: multi-message delivery returns for long reports.
     """
-    text = (bundle.summary or "").strip()
+    text = (text or "").strip()
     if not text:
-        raise PermanentSendError("summary is empty; aborting (TASK-073)")
-    if len(text) > MAX_SUMMARY_CHARS:
-        log.warning("summary is %d chars; truncating to %d", len(text), MAX_SUMMARY_CHARS)
-        # Reserve one char for the ellipsis so the result never exceeds the limit.
-        text = text[: MAX_SUMMARY_CHARS - 1].rstrip() + "…"
+        raise PermanentSendError("report text is empty; aborting (TASK-073)")
+
+    chunks = number_chunks(split_text(text, MAX_TEXT_CHARS))
+    if not chunks:
+        raise PermanentSendError("report text produced no sendable chunks")
+    if len(chunks) > 1:
+        log.info("report text is %d chars; sending %d messages", len(text), len(chunks))
+
+    for index, chunk in enumerate(chunks, 1):
+        part = "summary" if index == 1 else f"full:{index}"
+
+        def _do(_chunk=chunk) -> SendResult:
+            result = client.send_text(recipient, _chunk)
+            if not result.ok:
+                raise RecoverableSendError(result.detail or "send_text returned not ok")
+            return result
+
+        _send_part(part, _do, retry, outcome)
+    outcome.summary_ok = True
+    outcome.full_ok = True
+
+
+def _send_file(client: WeChatClient, recipient: dict, path, mode: str, retry, outcome: DeliveryOutcome) -> None:
+    """Send an html/pdf artifact as a single file attachment."""
+    from pathlib import Path
+
+    target = Path(path)
+    if not target.is_file():
+        raise PermanentSendError(f"{mode} attachment missing: {target}")
 
     def _do() -> SendResult:
-        result = client.send_text(recipient, text)
+        result = client.send_file(recipient, target, caption="")
         if not result.ok:
-            raise RecoverableSendError(result.detail or "send_text returned not ok")
+            raise RecoverableSendError(result.detail or "send_file returned not ok")
         return result
 
-    _send_part("summary", _do, retry, outcome)
-    outcome.summary_ok = True
+    _send_part(mode, _do, retry, outcome)
+    if mode == "pdf":
+        outcome.pdf_ok = True
+    outcome.full_ok = True
 
 
 def _send_report_unlocked(
@@ -299,8 +322,12 @@ def _send_report_unlocked(
                     outcome.full_ok = bool(previous.get("full_ok"))
 
         if outcome.status == "pending":
-            if mode == "summary":
-                _send_summary(client, recipient, bundle, cfg.retry, outcome)
+            if mode == "md":
+                _send_text(client, recipient, bundle.summary or "", cfg.retry, outcome)
+            elif mode in ("html", "pdf"):
+                if bundle.file_path is None:
+                    raise PermanentSendError(f"{mode} mode requires a file attachment")
+                _send_file(client, recipient, bundle.file_path, mode, cfg.retry, outcome)
             else:
                 raise PermanentSendError(f"unknown mode {mode!r}")
             outcome.status = "success"
@@ -322,9 +349,9 @@ def _send_report_unlocked(
         # not mask the delivery outcome if the state file itself is corrupt.
         _record_state(outcome, strict=False)
         log.info(
-            "wechat send done: id=%s source=%s mode=%s status=%s summary=%s pdf=%s duplicate_skipped=%s",
+            "wechat send done: id=%s source=%s mode=%s status=%s summary=%s full=%s pdf=%s duplicate_skipped=%s",
             outcome.execution_id, source, mode, outcome.status,
-            outcome.summary_ok, outcome.pdf_ok, outcome.duplicate_skipped,
+            outcome.summary_ok, outcome.full_ok, outcome.pdf_ok, outcome.duplicate_skipped,
         )
     return outcome
 

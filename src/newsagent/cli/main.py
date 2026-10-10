@@ -146,24 +146,40 @@ def _send_generated_report(paths: dict, mode_override: str | None) -> dict:
     if not cfg.enabled or not is_bound():
         return {"status": "failed", "errors": ["wechat disabled or recipient not bound"]}
 
-    # Pull the summary text from the report's manifest when available.
+    # Resolve the artifact for the requested mode from the freshly generated
+    # paths. `mode` defaults to `md`; html/pdf send the matching file directly.
+    artifact = paths.get(mode) or paths.get("md") or next(iter(paths.values()))
     summary = None
-    manifest = paths.get("md")
-    if manifest is not None:
-        cand = manifest.with_suffix(".manifest.json")
+    if artifact is not None:
+        cand = artifact.with_suffix(".manifest.json")
         if cand.exists():
             try:
                 import json as _json
                 summary = _json.loads(cand.read_text(encoding="utf-8")).get("summary")
             except Exception:  # noqa: BLE001
                 summary = None
-
-    bundle = ReportBundle(
-        report_id=paths.get("md", next(iter(paths.values()))).stem,
-        summary=summary,
-        full_text_path=paths.get("md"),
-        pdf_path=paths.get("pdf"),
-    )
+    if mode == "md":
+        text = None
+        if artifact is not None and artifact.exists():
+            try:
+                text = artifact.read_text(encoding="utf-8", errors="replace").strip()
+            except OSError:
+                text = None
+        bundle = ReportBundle(
+            report_id=artifact.stem if artifact else "report",
+            summary=text,
+            full_text_path=artifact,
+            mode="md",
+            file_path=artifact,
+        )
+    else:
+        bundle = ReportBundle(
+            report_id=artifact.stem if artifact else "report",
+            summary=summary,
+            pdf_path=artifact if mode == "pdf" else None,
+            mode=mode,
+            file_path=artifact,
+        )
     client = None
     try:
         client = _wechat_client()
@@ -365,7 +381,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated output formats: md,html,pdf (default: md)",
     )
     sp.add_argument("--send-wechat", action="store_true", help="send the generated report via WeChat")
-    sp.add_argument("--wechat-mode", choices=["summary"], default=None)
+    sp.add_argument(
+        "--wechat-mode", choices=["md", "html", "pdf"], default=None,
+        help="send format: md text (default), or html/pdf attachment",
+    )
     sp.set_defaults(func=cmd_report)
 
     # WeChat subcommands (doc/wechat_tasks.md phase 6)
@@ -376,8 +395,14 @@ def build_parser() -> argparse.ArgumentParser:
     wsub.add_parser("bind", help="bind recipient").set_defaults(func=cmd_wechat_bind)
     wsub.add_parser("logout", help="clear local credentials").set_defaults(func=cmd_wechat_logout)
     wsp = wsub.add_parser("send", help="send a report")
-    wsp.add_argument("--mode", choices=["summary"], default=None)
-    wsp.add_argument("--file", default=None, help="path to a plain-text summary file")
+    wsp.add_argument(
+        "--mode", choices=["md", "html", "pdf"], default=None,
+        help="send format: md text (default), or html/pdf attachment",
+    )
+    wsp.add_argument(
+        "--file", default=None,
+        help="explicit report file; must match --mode (.md/.html/.pdf)",
+    )
     wsp.set_defaults(func=cmd_wechat_send)
 
     sp = sub.add_parser("index", help="build event embeddings (TASK-044)")

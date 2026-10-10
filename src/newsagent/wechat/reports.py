@@ -21,11 +21,18 @@ class ReportInputError(NewsAgentError):
 
 @dataclass(frozen=True)
 class ReportBundle:
-    """The summary to send for one report (TASK-049, revised 2026-10-10).
+    """One report resolved for the requested send format (TASK-049).
 
-    `full_text_path` / `pdf_path` are retained for backward compatibility with
-    callers, but only `summary` is used now that PDF and full-text sending were
-    removed.
+    Multi-format sending was restored 2026-10-11. `mode` names the artifact to
+    deliver (`md` / `html` / `pdf`, default `md`):
+
+    - `md`:   inline text in `summary` (the markdown report body)
+    - `html`: file attachment at `file_path`
+    - `pdf`:  file attachment at `file_path`
+
+    `summary` also carries the manifest summary for reference/logging. The
+    legacy `full_text_path` / `pdf_path` fields are kept for callers that still
+    reference them.
     """
 
     report_id: str
@@ -33,6 +40,13 @@ class ReportBundle:
     full_text_path: Path | None = None
     pdf_path: Path | None = None
     manifest_path: Path | None = None
+    mode: str = "md"
+    file_path: Path | None = None
+
+
+# Report artifacts produced by the generator, mapped to their manifest key.
+_MANIFEST_KEY = {"md": "md", "html": "html", "pdf": "pdf"}
+_FILE_SUFFIX = {"html": ".html", "pdf": ".pdf"}
 
 
 def output_dir() -> Path:
@@ -73,12 +87,23 @@ def latest_manifest(directory: Path | None = None) -> tuple[Path, dict]:
     return path, data
 
 
-def _bundle_from_manifest(path: Path, data: dict) -> ReportBundle:
+def _bundle_from_manifest(path: Path, data: dict, mode: str) -> ReportBundle:
     return ReportBundle(
         report_id=str(data.get('report_id', path.stem)),
         summary=data.get('summary'),
         manifest_path=path,
+        mode=mode,
     )
+
+
+def _manifest_file(data: dict, mode: str) -> Path | None:
+    """Resolve the artifact path recorded in the manifest's `files` map."""
+    files = data.get('files') or {}
+    if not isinstance(files, dict):
+        return None
+    key = _MANIFEST_KEY.get(mode, mode)
+    raw = files.get(key)
+    return Path(raw) if raw else None
 
 
 def _check_readable(path: Path, what: str) -> None:
@@ -94,33 +119,80 @@ def _check_readable(path: Path, what: str) -> None:
 
 
 def resolve_report(
-    mode: str = 'summary',
+    mode: str = 'md',
     file: Path | None = None,
     directory: Path | None = None,
 ) -> ReportBundle:
-    """Resolve the summary text to send (TASK-053 ~ TASK-059, revised).
+    """Resolve the artifact to send for `mode` (TASK-053 ~ TASK-059, restored).
 
-    Design revision (2026-10-10): only `summary` mode remains. PDF attachments
-    and full-text (multi-message) sending were removed because they read poorly
-    in WeChat.
+    Formats (default `md`):
+
+    - `md`:   inline markdown text (split into chunks by the sender if long)
+    - `html`: HTML file sent as an attachment
+    - `pdf`:  PDF file sent as an attachment
+
+    Without `--file`, the newest report manifest is used and its `files` map is
+    consulted for the requested artifact. A missing artifact fails loudly; it
+    is never silently downgraded to another format (TASK-064/TASK-065).
     """
+    from .config import SEND_MODES  # local import avoids a config cycle
+
     directory = directory or output_dir()
-    if mode != 'summary':
+    if mode not in SEND_MODES:
         raise ReportInputError(
-            f"unsupported send mode {mode!r}; only 'summary' is supported "
-            "(PDF/full modes were removed)"
+            f"unsupported send mode {mode!r}; expected one of {SEND_MODES}"
         )
 
     if file is not None:
-        # A manually-specified summary file must be plain text.
-        _check_readable(file, 'summary file')
-        text = file.read_text(encoding='utf-8', errors='replace').strip()
-        if not text:
-            raise ReportInputError(f'summary file is empty: {file}')
-        return ReportBundle(report_id=file.stem, summary=text, full_text_path=None, pdf_path=None)
+        _check_readable(file, f'{mode} file')
+        if mode == 'md':
+            text = file.read_text(encoding='utf-8', errors='replace').strip()
+            if not text:
+                raise ReportInputError(f'markdown file is empty: {file}')
+            return ReportBundle(
+                report_id=file.stem, summary=text, mode='md',
+                full_text_path=file, file_path=file,
+            )
+        # html / pdf attachments: validate the extension matches the mode.
+        expected = _FILE_SUFFIX[mode]
+        if file.suffix.lower() != expected:
+            raise ReportInputError(
+                f'{mode} mode expects a {expected} file, got {file.name}'
+            )
+        return ReportBundle(
+            report_id=file.stem, summary=None, mode=mode,
+            pdf_path=file if mode == 'pdf' else None, file_path=file,
+        )
 
-    _, data = latest_manifest(directory)
-    summary = (data.get('summary') or '').strip()
-    if not summary:
-        raise ReportInputError('latest report has no summary text')
-    return _bundle_from_manifest(_, data)
+    manifest_path, data = latest_manifest(directory)
+    artifact = _manifest_file(data, mode)
+    if artifact is None:
+        raise ReportInputError(
+            f"latest report has no '{mode}' artifact; regenerate with "
+            f"`news report --formats {mode}`"
+        )
+    _check_readable(artifact, f'{mode} file')
+
+    if mode == 'md':
+        text = artifact.read_text(encoding='utf-8', errors='replace').strip()
+        if not text:
+            raise ReportInputError(f'markdown report is empty: {artifact}')
+        bundle = _bundle_from_manifest(manifest_path, data, mode)
+        return ReportBundle(
+            report_id=bundle.report_id,
+            summary=text,
+            manifest_path=manifest_path,
+            mode='md',
+            full_text_path=artifact,
+            file_path=artifact,
+        )
+
+    bundle = _bundle_from_manifest(manifest_path, data, mode)
+    return ReportBundle(
+        report_id=bundle.report_id,
+        summary=bundle.summary,
+        manifest_path=manifest_path,
+        mode=mode,
+        pdf_path=artifact if mode == 'pdf' else None,
+        file_path=artifact,
+    )
