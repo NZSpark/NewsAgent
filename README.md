@@ -1,6 +1,6 @@
 # AI News Agent
 
-一个面向 AI 行业资讯的本地新闻采集、分析与检索工具。它从配置的新闻来源收集文章，进行标准化、去重、LLM 分类、事件聚类与重要性排序，并将结果保存在本地 SQLite 数据库中。用户可以通过命令行查询新闻、追问事件、执行主动研究，以及生成 Markdown、HTML 和 PDF 格式的日报与周报。
+一个面向 AI 行业资讯的本地新闻采集、分析、检索与报告投递工具。它从配置的新闻来源收集文章，进行标准化、去重、LLM 分类、事件聚类与重要性排序，并将结果保存在本地 SQLite 数据库中。用户可以通过命令行查询新闻、追问事件、执行主动研究，生成 Markdown、HTML 和 PDF 格式的日报与周报，还可以通过可选的微信投递功能，将新闻报告摘要发送到微信。
 
 项目采用 **Python 负责数据管道、规则、状态与存储，LLM 负责语义理解、分类、归纳与分析** 的设计。LLM 通过本地运行的 OpenAI 兼容代理接入 DeepSeek、Gemini 和 ChatGPT Web 等服务，不要求本项目直接集成各服务的专有 API。
 
@@ -16,6 +16,7 @@
 - [命令行参考](#命令行参考)
 - [LLM Provider 配置](#llm-provider-配置)
 - [定时采集](#定时采集)
+- [微信报告投递](#微信报告投递)
 - [数据与输出](#数据与输出)
 - [项目结构](#项目结构)
 - [测试与排错](#测试与排错)
@@ -35,6 +36,7 @@
 | Query Agent | 根据本地新闻库回答问题，并返回相关来源链接 |
 | 主动研究 | 针对指定事件或重要事件开展研究；可选择启用实时抓取 fallback |
 | 报告生成 | 生成 Markdown、HTML 或 PDF 格式的日报与周报，支持一次生成多种格式，保存到 `output/` |
+| 微信报告投递 | 可选安装 iLink Bot 支持；二维码登录、单一收件人绑定、摘要发送、重试及投递状态记录 |
 | 语义检索 | 为文章和事件建立向量索引，并执行语义搜索 |
 | 运行维护 | 日志、来源健康状态、LLM 健康检查、重试、fallback、并发限制和熔断机制 |
 
@@ -89,7 +91,7 @@ Event Ranking
 - 可访问的新闻来源；运行采集时需要网络连接。
 - 如果要执行 LLM 分类、语义分析、问答或主动研究，需要启动并配置相应的本地 LLM 兼容代理。
 
-主要运行依赖由 `pyproject.toml` 声明，包括 `httpx`、`feedparser`、`selectolax`、`beautifulsoup4`、`trafilatura`、`openai`、`pyyaml` 和 `tenacity`。开发依赖包括 `pytest` 与 `pytest-asyncio`。
+主要运行依赖由 `pyproject.toml` 声明，包括 `httpx`、`feedparser`、`selectolax`、`beautifulsoup4`、`trafilatura`、`openai`、`pyyaml` 和 `tenacity`。开发依赖包括 `pytest` 与 `pytest-asyncio`。可选依赖组包括 `pdf`（WeasyPrint）和 `wechat`（`cryptography`、`certifi`、`qrcode`）。
 
 ## 安装与配置
 
@@ -102,11 +104,11 @@ python3 -m venv .venv
 # 安装项目及开发依赖
 .venv/bin/python -m pip install -e ".[dev]"
 
-# 创建本地配置文件
+# 复制环境变量模板（CLI 不会自动加载 .env）
 cp .env.example .env
 ```
 
-配置通过环境变量读取，默认值集中定义在 `src/newsagent/config.py`。请根据实际运行环境修改 `.env` 或设置相应环境变量。`.env.example` 是配置参考；使用前请确认当前运行方式确实会加载你所使用的环境变量文件。
+配置由 `src/newsagent/config.py` 从进程环境变量读取。项目不会自动加载 `.env` 文件，因此 `cp .env.example .env` 只是创建配置文件，不会让 CLI 自动读取其中的变量。运行前请通过 shell 显式导出环境变量，或在 `launchd`、`cron` 等进程管理配置中设置它们。完整变量示例见 `.env.example`。
 
 ### 关键配置项
 
@@ -209,6 +211,54 @@ WeasyPrint 在部分操作系统上还需要额外的系统库和可用字体，
 .venv/bin/python -m newsagent pipeline --limit 30 --hours 48
 ```
 
+## 微信报告投递
+
+微信投递是独立的可选出口，不影响默认的新闻采集和报告生成流程。项目包含 iLink Bot 客户端、二维码登录、入站消息绑定、摘要发送、错误分类、有限重试和投递状态记录。首次使用需要可以访问 iLink 服务的网络及可用的 Bot 账号。
+
+### 安装可选依赖
+
+仅在需要微信投递时安装 `wechat` extra；PDF 渲染另需 `pdf` extra：
+
+```bash
+.venv/bin/python -m pip install -e ".[wechat]"
+# 同时需要 PDF 时：
+.venv/bin/python -m pip install -e ".[pdf,wechat]"
+```
+
+### 登录、绑定和发送
+
+```bash
+# 使用微信扫描终端显示的二维码
+.venv/bin/news wechat login
+
+# 先用目标个人微信向 Bot 主动发消息，再启动绑定
+.venv/bin/news wechat bind
+
+# 查看账号、绑定及投递配置状态（脱敏）
+.venv/bin/news wechat status
+
+# 生成日报，并显式发送摘要
+.venv/bin/news report --hours 24 --formats md --send-wechat
+
+# 发送已有摘要，不重新生成报告
+.venv/bin/news wechat send --mode summary
+.venv/bin/news wechat send --mode summary --file /absolute/path/to/summary.txt
+
+# 清除本地登录凭据和收件人绑定
+.venv/bin/news wechat logout
+```
+
+### 当前行为与安全边界
+
+- 当前只支持 `summary` 单条文本模式。摘要超过 1800 个字符时会截断并附省略号；不会拆成多条消息，也不会通过此模式发送 PDF 附件。
+- `news report` 默认只生成报告；只有显式传入 `--send-wechat` 才会尝试发送。报告生成失败时不会继续发送。
+- `news wechat bind` 等待入站消息，并保存发件人标识和上下文。请确认绑定的是预期的个人微信账号。`--file` 应指向纯文本摘要文件。
+- 默认配置目录为 `~/.newsagent/wechat/`，可通过 `NEWSAGENT_WECHAT_DIR` 更改。目录在 POSIX 系统上使用 `0700` 权限，敏感文件使用 `0600` 权限；不要提交 `account.json`、`recipient.json`、`sync.json`、`delivery-state.json` 或真实令牌。
+- 默认失败重试配置为最多 3 次、间隔 10 秒。网络超时可能导致送达状态不确定，重发前请检查接收端和 `delivery-state.json`，避免重复消息。
+- 定时配置不会启动内置常驻的微信调度器，也不会自动安装系统任务。用户需自行配置 macOS `launchd` 或 Linux `cron`，并使用绝对路径和日志。模板和说明见 `doc/templates/` 及 `doc/wechat_schedule_templates.md`。
+
+参考文档：`doc/output_wechat.md`、`doc/wechat_tasks.md`、`doc/wechat_phase0_survey.md`。源码研究和 mock 测试不等同于真实微信账号端到端验收；请在目标环境验证登录、绑定和实际收件情况。
+
 ## 命令行参考
 
 安装后，CLI 入口为 `news`。命令通常输出 JSON 格式结果；报告生成命令会输出生成文件路径。
@@ -225,9 +275,14 @@ WeasyPrint 在部分操作系统上还需要额外的系统库和可用字体，
 | `news ask "问题"` | 基于本地事件回答问题 | 问题文本 |
 | `news semantic-cluster` | 使用 LLM 对规则聚类结果进行语义合并 | `--hours H`，默认 48 |
 | `news research` | 研究指定事件或筛选出的重要事件 | 可选 `EVENT_ID`；`--limit N`，默认 3；`--min-importance X`，默认 0.6；`--live` 启用实时抓取 fallback |
-| `news report` | 生成 Markdown、HTML 或 PDF 日报/周报 | `--hours H`，默认 24；`--formats md,html,pdf`，默认 `md` |
+| `news report` | 生成 Markdown、HTML 或 PDF 日报/周报；可选发送摘要到微信 | `--hours H`，默认 24；`--formats md,html,pdf`，默认 `md`；`--send-wechat` 显式发送；`--wechat-mode summary` |
 | `news index` | 建立文章和事件的向量索引 | `--limit N`，默认 500 |
 | `news semantic-search "查询"` | 对事件执行语义搜索 | `--limit N`，默认 20；`--articles` 改为搜索文章 |
+| `news wechat login` | 通过二维码登录 iLink Bot | 需安装 `.[wechat]` 并可访问 iLink 服务 |
+| `news wechat status` | 查看账号、绑定及投递配置的脱敏状态 | 无 |
+| `news wechat bind` | 等待目标个人微信向 Bot 发消息并保存绑定 | 需先登录 |
+| `news wechat send` | 发送已有摘要，不生成新报告 | `--mode summary`；可用 `--file PATH` 指定纯文本摘要 |
+| `news wechat logout` | 清除本地账号凭据和收件人绑定 | 不删除报告文件 |
 
 ### 常用示例
 
@@ -356,6 +411,7 @@ news health
 | --- | --- |
 | `data/newsagent.db` | 默认 SQLite 数据库，保存来源、文章、事件以及流水线状态等数据 |
 | `output/` | Markdown、HTML 和 PDF 报告输出目录 |
+| `output/*.manifest.json` | 报告格式路径、摘要等元数据，供报告配对及摘要发送使用 |
 | `doc/sites.md` | 新闻来源清单 |
 | `.env.example` | 环境变量配置示例 |
 
@@ -375,6 +431,12 @@ news health
 │   ├── design_gemini.md        # Gemini 相关设计
 │   ├── local_llm.md            # 本地 LLM 代理说明
 │   ├── sites.md                # 新闻来源清单
+│   ├── output_format.md        # 报告输出格式说明
+│   ├── output_tasks.md         # 报告输出任务记录
+│   ├── output_wechat.md        # 微信投递设计
+│   ├── wechat_tasks.md         # 微信任务与验收状态
+│   ├── wechat_phase0_survey.md # Hermes iLink 协议参考调研
+│   ├── wechat_schedule_templates.md # launchd / cron 说明
 │   └── tasks_*.md              # 实施任务与阶段记录
 ├── output/                     # 生成的 Markdown、HTML 和 PDF 日报/周报
 ├── scripts/                    # 演示及单 Provider 探测脚本
@@ -387,6 +449,7 @@ news health
 │   ├── llm/                    # 客户端、路由、Schema、重试、熔断、健康检查
 │   ├── storage/                # SQLite、Repository、搜索、向量及后端抽象
 │   ├── agents/                 # Query、Research、Report
+│   ├── wechat/                 # iLink 客户端、登录、凭据、报告解析和发送
 │   └── cli/                    # CLI 与持续调度循环
 ├── tests/                      # 自动化测试
 ├── .env.example                # 配置模板
@@ -436,6 +499,12 @@ Query Agent 只能基于本地收集的事件及关联文章作答。先检查�
 - [Gemini 相关设计](doc/design_gemini.md)
 - [本地 LLM 代理部署与约束](doc/local_llm.md)
 - [新闻来源清单](doc/sites.md)
+- [报告格式说明](doc/output_format.md)
+- [报告输出任务记录](doc/output_tasks.md)
+- [微信投递设计](doc/output_wechat.md)
+- [微信任务与验收记录](doc/wechat_tasks.md)
+- [微信协议参考调研](doc/wechat_phase0_survey.md)
+- [微信定时任务模板说明](doc/wechat_schedule_templates.md)
 - [ChatGPT 实施任务记录](doc/tasks_chatgpt.md)
 - [DeepSeek 实施任务记录](doc/tasks_deepseek.md)
 
