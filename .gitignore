@@ -8,3 +8,10 @@ data/
 output/
 *.db
 .pytest_cache/
+
+# WeChat credential / state files (defense-in-depth; normally under ~/.newsagent/)
+account.json
+recipient.json
+delivery-state.json
+sync.json
+.newsagent/

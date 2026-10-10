@@ -43,6 +43,16 @@ def ensure_dir(base: Path | None = None) -> Path:
     return d
 
 
+def write_protected(path: Path, data) -> None:
+    """Write non-credential but still-sensitive state at 0600 atomically.
+
+    Used for files like sync.json whose contents (an opaque server cursor) are
+    tied to the logged-in account and should not be world-readable or land in a
+    repo checkout with loose permissions.
+    """
+    _atomic_write(path, data)
+
+
 def _read_json(path: Path) -> dict:
     if not path.exists():
         return {}

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..logging_setup import get_logger
 from .client import NotBoundError
-from .credentials import config_dir, save_account, save_recipient
+from .credentials import config_dir, save_account, save_recipient, write_protected
 from .ilink import ILINK_BASE_URL, ILinkClient
 
 log = get_logger("wechat.login")
@@ -98,7 +98,8 @@ def bind_recipient(*, timeout_seconds: int = 300) -> dict | None:
             resp = client.get_updates(sync_buf)
             if resp.get("get_updates_buf"):
                 sync_buf = str(resp["get_updates_buf"])
-                sync_path.write_text(f'{{"get_updates_buf": {sync_buf!r}}}', encoding="utf-8")
+                # 0600: the cursor is tied to the logged-in account.
+                write_protected(sync_path, {"get_updates_buf": sync_buf})
             for msg in resp.get("msgs") or []:
                 sender = str(msg.get("from_user_id") or "").strip()
                 if not sender or sender == client.account_id:
