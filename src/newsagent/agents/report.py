@@ -6,6 +6,7 @@ or calls an LLM.
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -173,6 +174,54 @@ class ReportGenerationError(RuntimeError):
         super().__init__(f'One or more report formats failed: {details}')
 
 
+def extract_summary(data: ReportData, max_events: int = 5) -> str:
+    """Plain-text summary for WeChat `summary` mode (TASK-071/TASK-072).
+
+    Derived from the report's lead events; never calls an LLM.
+    """
+    lines = [data.title, '']
+    if not data.top_events:
+        lines.append('_本期暂无事件。_')
+        return '\n'.join(lines)
+    for ev in data.top_events[:max_events]:
+        lines.append(f"• {ev['title']}")
+        summary = (ev.get('summary') or '').strip()
+        if summary:
+            lines.append(f"  {summary}")
+        if ev.get('why_it_matters'):
+            lines.append(f"  影响：{ev['why_it_matters']}")
+    return '\n'.join(lines)
+
+
+def _write_manifest(
+    output_dir: Path,
+    data: ReportData,
+    generated: dict[str, Path],
+) -> Path:
+    """Write a report manifest so summary/full/pdf can be paired reliably.
+
+    Responds to the TASK-005 gap: there was no report id or file manifest.
+    """
+    stamp = data.generated_at.strftime('%Y-%m-%d')
+    prefix = _filename_prefix(data)
+    stamp_full = data.generated_at.strftime('%Y%m%dT%H%M%SZ')
+    report_id = f'{prefix}-{stamp_full}'
+    manifest = {
+        'report_id': report_id,
+        'prefix': prefix,
+        'date': stamp,
+        'generated_at': data.generated_at.isoformat(),
+        'period_hours': data.period_hours,
+        'title': data.title,
+        'files': {fmt: str(path) for fmt, path in generated.items()},
+        'summary': extract_summary(data),
+        'events_count': data.events_count,
+    }
+    path = output_dir / f'{prefix}_{stamp}.manifest.json'
+    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+    return path
+
+
 def write_reports(
     hours: int = 24,
     formats: str | Iterable[str] = ('md',),
@@ -219,6 +268,10 @@ def write_reports(
 
     if errors:
         raise ReportGenerationError(generated, errors)
+    try:
+        _write_manifest(output_dir, data, generated)
+    except Exception:  # manifest is an aid, not a hard requirement for md-only callers
+        log.exception('failed to write report manifest')
     return generated
 
 

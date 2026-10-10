@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd template for daily WeChat report delivery.
+  Replace every /Users/you/NewsAgent with your real absolute path.
+  DO NOT put tokens or credentials in this file (TASK-139).
+  See doc/wechat_schedule_templates.md.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.newsagent.wechat</string>
+
+    <!-- Absolute python + module invocation; no reliance on shell PATH (TASK-137/138). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/you/NewsAgent/.venv/bin/python</string>
+        <string>-m</string>
+        <string>newsagent.cli.main</string>
+        <!-- 生成后发送；也可改为只发送已有报告：
+             <string>wechat</string><string>send</string> -->
+        <string>report</string>
+        <string>--hours</string>
+        <string>24</string>
+        <string>--formats</string>
+        <string>md,pdf</string>
+        <string>--send-wechat</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/you/NewsAgent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NEWSAGENT_DB_PATH</key>
+        <string>/Users/you/NewsAgent/data/newsagent.db</string>
+        <key>NEWSAGENT_WECHAT_DIR</key>
+        <string>/Users/you/.newsagent/wechat</string>
+    </dict>
+
+    <!-- Local time; DST handled by the OS (TASK-140). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/you/NewsAgent/logs/wechat-launchd.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/you/NewsAgent/logs/wechat-launchd.err</string>
+
+    <!-- Do not auto-restart a finished one-shot job. -->
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

@@ -1,0 +1,15 @@
+# Linux cron template for daily WeChat report delivery.
+# Install with: crontab -e  (paste and adjust the absolute paths below)
+# See doc/wechat_schedule_templates.md.
+#
+# DO NOT put tokens or credentials here (TASK-139).
+
+# cron does NOT inherit your interactive PATH/venv (TASK-138).
+PATH=/Users/you/NewsAgent/.venv/bin:/usr/local/bin:/usr/bin:/bin
+
+# Daily at 08:00 local time (TASK-133).
+# "generate and send": report first, then WeChat send.
+0 8 * * * cd /Users/you/NewsAgent && flock -n /tmp/newsagent-wechat.lock /Users/you/NewsAgent/.venv/bin/python -m newsagent.cli.main report --hours 24 --formats md,pdf --send-wechat >> /Users/you/NewsAgent/logs/wechat-cron.log 2>&1
+
+# Alternative — "send existing report" only (does not generate anything, TASK-127):
+# 0 8 * * * cd /Users/you/NewsAgent && flock -n /tmp/newsagent-wechat.lock /Users/you/NewsAgent/.venv/bin/python -m newsagent.cli.main wechat send >> /Users/you/NewsAgent/logs/wechat-cron.log 2>&1

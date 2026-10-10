@@ -114,11 +114,139 @@ def cmd_report(args) -> int:
         })
         return 1
 
+    # TASK-117 ~ TASK-123: only send when explicitly requested.
+    wechat_status = None
+    if getattr(args, "send_wechat", False):
+        wechat_status = _send_generated_report(paths, getattr(args, "wechat_mode", None))
+
+    if wechat_status is not None:
+        _print({"reports": {fmt: str(p) for fmt, p in paths.items()}, "wechat": wechat_status})
+        return 0 if wechat_status.get("status") == "success" else 1
     if len(paths) == 1:
         print(str(next(iter(paths.values()))))
     else:
         _print({fmt: str(path) for fmt, path in paths.items()})
     return 0
+
+
+def _send_generated_report(paths: dict, mode_override: str | None) -> dict:
+    """Send the just-generated report; build a bundle from explicit paths (TASK-120)."""
+    from ..wechat.config import load_config, WeChatConfigError
+    from ..wechat.credentials import load_recipient, is_bound
+    from ..wechat.reports import ReportBundle
+    from ..wechat.sender import send_report
+
+    try:
+        cfg = load_config()
+        mode = cfg.resolve_mode(cli_mode=mode_override)
+        cfg = cfg.__class__(**{**cfg.__dict__, "default_mode": mode})
+    except WeChatConfigError as exc:
+        return {"status": "failed", "errors": [str(exc)]}
+
+    if not cfg.enabled or not is_bound():
+        return {"status": "failed", "errors": ["wechat disabled or recipient not bound"]}
+
+    # Pull the summary text from the report's manifest when available.
+    summary = None
+    manifest = paths.get("md")
+    if manifest is not None:
+        cand = manifest.with_suffix(".manifest.json")
+        if cand.exists():
+            try:
+                import json as _json
+                summary = _json.loads(cand.read_text(encoding="utf-8")).get("summary")
+            except Exception:  # noqa: BLE001
+                summary = None
+
+    bundle = ReportBundle(
+        report_id=paths.get("md", next(iter(paths.values()))).stem,
+        summary=summary,
+        full_text_path=paths.get("md"),
+        pdf_path=paths.get("pdf"),
+    )
+    outcome = send_report(bundle, _wechat_client(), load_recipient(), cfg, source="report_command")
+    return outcome.to_dict()
+
+
+def _wechat_client():
+    """Real client is blocked; return the explicit unavailable placeholder."""
+    from ..wechat.client import UnavailableClient
+    return UnavailableClient()
+
+
+def cmd_wechat_login(args) -> int:
+    from ..wechat.client import PermanentSendError
+    print(
+        "微信 iLink Bot 登录尚未实现：协议验证被阻塞。\n"
+        "见 doc/wechat_phase0_survey.md。本仓库无法访问 Hermes 源码或真实测试账号。",
+        file=sys.stderr,
+    )
+    return 3
+
+
+def cmd_wechat_status(args) -> int:
+    from ..wechat.config import load_config
+    from ..wechat.credentials import redacted_status
+    cfg = load_config()
+    _print({
+        **redacted_status(),
+        "default_mode": cfg.default_mode,
+        "enabled": cfg.enabled,
+        "retry": {"max_retries": cfg.retry.max_retries, "interval_seconds": cfg.retry.interval_seconds},
+        "schedule": {"daily_time": cfg.schedule.daily_time, "mode": cfg.schedule.mode, "action": cfg.schedule.action},
+    })
+    return 0
+
+
+def cmd_wechat_bind(args) -> int:
+    print(
+        "收件人绑定需要真实 iLink 入站消息轮询，协议验证被阻塞。\n"
+        "见 doc/wechat_phase0_survey.md。",
+        file=sys.stderr,
+    )
+    return 3
+
+
+def cmd_wechat_logout(args) -> int:
+    from ..wechat.credentials import clear_account, clear_recipient
+    clear_account()
+    clear_recipient()
+    print("已清除本地微信凭据与绑定状态（报告文件未删除）。")
+    return 0
+
+
+def cmd_wechat_send(args) -> int:
+    from pathlib import Path
+    from ..wechat.config import load_config, WeChatConfigError
+    from ..wechat.credentials import load_recipient, is_bound
+    from ..wechat.reports import resolve_report, ReportInputError
+    from ..wechat.sender import send_report
+
+    try:
+        cfg = load_config()
+        mode = cfg.resolve_mode(cli_mode=args.mode)
+        cfg = cfg.__class__(**{**cfg.__dict__, "default_mode": mode})
+    except WeChatConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    if not cfg.enabled:
+        print("wechat 发送已禁用（config.wechat.enabled=false）", file=sys.stderr)
+        return 2
+    if not is_bound():
+        print("收件人未绑定，请先运行 `news wechat bind`。", file=sys.stderr)
+        return 1
+
+    try:
+        bundle = resolve_report(mode, file=Path(args.file) if args.file else None)
+    except ReportInputError as exc:
+        print(f"报告输入错误：{exc}", file=sys.stderr)
+        return 1
+
+    recipient = load_recipient()
+    outcome = send_report(bundle, _wechat_client(), recipient, cfg, source="manual")
+    _print(outcome.to_dict())
+    return 0 if outcome.status == "success" else 1
 
 
 def cmd_index(args) -> int:
@@ -203,7 +331,21 @@ def build_parser() -> argparse.ArgumentParser:
         default="md",
         help="comma-separated output formats: md,html,pdf (default: md)",
     )
+    sp.add_argument("--send-wechat", action="store_true", help="send the generated report via WeChat")
+    sp.add_argument("--wechat-mode", choices=["summary", "full", "summary_pdf"], default=None)
     sp.set_defaults(func=cmd_report)
+
+    # WeChat subcommands (doc/wechat_tasks.md phase 6)
+    wp = sub.add_parser("wechat", help="WeChat report delivery")
+    wsub = wp.add_subparsers(dest="wechat_command", required=True)
+    wsub.add_parser("login", help="QR login (protocol blocked)").set_defaults(func=cmd_wechat_login)
+    wsub.add_parser("status", help="show login/binding status").set_defaults(func=cmd_wechat_status)
+    wsub.add_parser("bind", help="bind recipient (protocol blocked)").set_defaults(func=cmd_wechat_bind)
+    wsub.add_parser("logout", help="clear local credentials").set_defaults(func=cmd_wechat_logout)
+    wsp = wsub.add_parser("send", help="send a report")
+    wsp.add_argument("--mode", choices=["summary", "full", "summary_pdf"], default=None)
+    wsp.add_argument("--file", default=None, help="report file (PDF for summary_pdf)")
+    wsp.set_defaults(func=cmd_wechat_send)
 
     sp = sub.add_parser("index", help="build event embeddings (TASK-044)")
     sp.add_argument("--limit", type=int, default=500)
