@@ -47,7 +47,7 @@
 | --- | --- | --- |
 | arXiv cs.AI | [https://arxiv.org/rss/cs.AI](https://arxiv.org/rss/cs.AI) | 最新预印本（RSS） |
 | arXiv cs.CL | [https://arxiv.org/rss/cs.CL](https://arxiv.org/rss/cs.CL) | NLP / LLM（RSS） |
-| Papers with Code / HF Papers | [https://huggingface.co/papers/trending](https://huggingface.co/papers/trending) | 论文+代码+榜单（原 paperswithcode.com 已跳转至此；抓取器含标题+摘要） |
+| Papers with Code | [https://huggingface.co/papers/trending](https://huggingface.co/papers/trending) | 论文+代码+榜单（原 paperswithcode.com 已跳转至此；抓取器含标题+摘要） |
 | Semantic Scholar | [https://www.semanticscholar.org/](https://www.semanticscholar.org/) | 学术搜索 |
 | alphaXiv | [https://www.alphaxiv.org/](https://www.alphaxiv.org/) | arXiv 讨论社区 |
 

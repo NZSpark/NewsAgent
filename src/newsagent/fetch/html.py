@@ -39,6 +39,25 @@ def _same_host(base: str, candidate: str) -> bool:
         return False
 
 
+# URL path segments that mark navigation / hub pages rather than articles.
+_NON_ARTICLE_SEGMENTS = (
+    "/author/", "/authors/", "/tag/", "/tags/", "/category/", "/categories/",
+    "/topics/", "/topic/", "/events/", "/event/", "/sponsored/", "/brand-studio/",
+    "/video/", "/videos/", "/podcast/", "/podcasts/", "/page/", "/about/",
+    "/contact/", "/privacy/", "/terms/", "/newsletter", "/feed", "/search",
+)
+
+
+def _looks_like_non_article(url: str) -> bool:
+    try:
+        path = urlparse(url).path.lower()
+    except Exception:  # noqa: BLE001
+        return False
+    if path in ("", "/"):
+        return True
+    return any(seg in path for seg in _NON_ARTICLE_SEGMENTS)
+
+
 def fetch_html(source: Source, client: httpx.Client, timeout: float) -> list[ArticleCandidate]:
     try:
         resp = client.get(source.url, timeout=timeout, follow_redirects=True)
@@ -60,7 +79,9 @@ def fetch_html(source: Source, client: httpx.Client, timeout: float) -> list[Art
         absolute = urljoin(source.url, href)
         if not _same_host(source.url, absolute) or absolute in seen:
             continue
-        text = anchor.get_text(strip=True)
+        if _looks_like_non_article(absolute):
+            continue
+        text = anchor.get_text(" ", strip=True)
         if len(text) < 15:  # skip nav / short links
             continue
         seen.add(absolute)
@@ -75,6 +96,10 @@ def fetch_html(source: Source, client: httpx.Client, timeout: float) -> list[Art
                 language=source.language,
             )
         )
+
+    # Prefer likely articles (longer titles) so the body-fetch cap targets
+    # real content instead of navigation / category links.
+    candidates.sort(key=lambda c: len(c.title), reverse=True)
 
     if not candidates:
         # Fallback: the page itself is the article.
@@ -92,6 +117,30 @@ def fetch_html(source: Source, client: httpx.Client, timeout: float) -> list[Art
 
     log.info("%s: %d html candidates", source.name, len(candidates))
     return candidates[:50]
+
+
+def fetch_article_body(url: str, client: httpx.Client, timeout: float) -> str:
+    """Fetch a single article page and extract its main text body.
+
+    Used by both HTML and RSS fetchers to populate content for candidates that
+    otherwise carry only a title/link. Failures are non-fatal: return "".
+    """
+    try:
+        resp = client.get(url, timeout=timeout, follow_redirects=True)
+    except httpx.HTTPError as exc:
+        log.debug("body fetch failed for %s: %s", url, exc)
+        return ""
+    if resp.status_code >= 400:
+        log.debug("body fetch %s returned HTTP %s", url, resp.status_code)
+        return ""
+    ctype = resp.headers.get("content-type", "")
+    if "html" not in ctype and "xml" not in ctype and ctype:
+        return ""
+    try:
+        return extract_main_text(resp.text, url)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("body extract failed for %s: %s", url, exc)
+        return ""
 
 
 def fetch_jina(url: str, api_key: str, client: httpx.Client, timeout: float) -> str:

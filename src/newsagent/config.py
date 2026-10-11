@@ -67,6 +67,13 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     name: str
@@ -113,6 +120,8 @@ class Config:
     fetch_timeout: float = field(default_factory=lambda: _env_float("NEWSAGENT_FETCH_TIMEOUT", 15))
     fetch_concurrency: int = field(default_factory=lambda: _env_int("NEWSAGENT_FETCH_CONCURRENCY", 6))
     fetch_retries: int = field(default_factory=lambda: _env_int("NEWSAGENT_FETCH_RETRIES", 2))
+    fetch_body: bool = field(default_factory=lambda: _env_bool("NEWSAGENT_FETCH_BODY", True))
+    fetch_max_articles: int = field(default_factory=lambda: _env_int("NEWSAGENT_FETCH_MAX_ARTICLES", 20))
     user_agent: str = field(
         default_factory=lambda: _env("NEWSAGENT_USER_AGENT", "NewsAgent/0.1")
     )

@@ -32,7 +32,12 @@ def utcnow() -> datetime:
 
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
-    return slug or "source"
+    if slug:
+        return slug
+    # Non-ASCII-only names (e.g. CJK) have no latin slug; derive a stable,
+    # collision-resistant id from the raw name instead of the "source" default.
+    digest = hashlib.sha1(text.strip().encode("utf-8")).hexdigest()[:8]
+    return f"src_{digest}"
 
 
 @dataclass

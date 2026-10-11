@@ -27,7 +27,7 @@
 | 模块 | 功能 |
 | --- | --- |
 | 新闻来源 | 通过 `doc/sites.md` 管理来源，区分来源类别和启用状态 |
-| 数据采集 | RSS 与 HTML 抓取；对来源级错误进行隔离，避免单个来源失败中断整轮采集 |
+| 数据采集 | RSS、HTML 与专用解析器（如 HF Papers）抓取；为每个来源抓取最新 N 篇的正文，来源级错误隔离，避免单个来源失败中断整轮采集 |
 | 文章处理 | 标准化文章字段，识别重复内容，记录到 SQLite |
 | LLM 分类 | 对文章进行语义分类和摘要生成 |
 | 事件聚类 | 将相关报道归并为事件；另外提供 LLM 语义聚类命令 |
@@ -119,6 +119,8 @@ cp .env.example .env
 | `NEWSAGENT_FETCH_TIMEOUT` | `15` | 单次抓取超时配置 |
 | `NEWSAGENT_FETCH_CONCURRENCY` | `6` | 抓取并发配置 |
 | `NEWSAGENT_FETCH_RETRIES` | `2` | 抓取重试配置 |
+| `NEWSAGENT_FETCH_BODY` | `true` | 是否为候选文章抓取正文 |
+| `NEWSAGENT_FETCH_MAX_ARTICLES` | `20` | 每个来源抓取正文的最大篇数（优先最新） |
 | `NEWSAGENT_USER_AGENT` | `NewsAgent/0.1` | 抓取请求使用的 User-Agent |
 | `JINA_API_KEY` | 空 | 如需使用相应的 Jina 回退服务，可配置 API Key |
 | `LLM_PROVIDERS` | `deepseek-web,gemini-web,chatgpt-web` | 全局 Provider 顺序配置 |
