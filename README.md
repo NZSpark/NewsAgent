@@ -213,6 +213,34 @@ WeasyPrint 在部分操作系统上还需要额外的系统库和可用字体，
 .venv/bin/python -m newsagent pipeline --limit 30 --hours 48
 ```
 
+## News Chat（交互式会话）
+
+`news chat` 提供一个统一交互入口：本地终端与微信 Bot 的消息进入**同一处理队列**，普通文本交给项目统一的 LLM 路由生成回复，以 `/` 开头的命令在**安全允许列表**内复用既有 CLI 功能。每个结果都会分别尝试投递到终端和微信两个输出端。
+
+```bash
+# 仅本地模式（无需微信登录/绑定，便于开发与测试）
+news chat --no-wechat
+
+# 终端 + 微信双端模式（需先 news wechat login && news wechat bind）
+news chat
+```
+
+**内置命令：** `/help` 显示帮助，`/quit`（或 Ctrl-C / EOF）安全退出。
+
+**允许的斜杠命令**（复用现有 CLI，参数经现有解析器校验）：
+`/fetch`、`/sources`、`/recent`、`/search`、`/event`、`/health`、`/pipeline`、`/ask`、`/semantic-cluster`、`/research`、`/report`、`/index`、`/semantic-search`。
+
+**安全边界：**
+- 命令通过进程内 CLI 函数执行，**不使用 `subprocess` 或 `shell=True`**，也不执行模型生成的命令。
+- 明确禁止 `/wechat login|bind|logout`（交互/敏感）与递归 `/chat`；`/report` 不接受 `--send-wechat`（避免与广播器重复发送）。
+- 未知命令返回用法提示，不交给 LLM 猜测执行。
+- 对话历史为内存中有界（默认最近 10 轮），终端与微信共享；不持久化自由文本历史。
+- 微信消息按消息 ID 去重，同步游标持久化在 `~/.newsagent/wechat/chat_sync.json`（0600）。
+- 某一输出通道失败不影响另一通道，也不会因此重新执行命令。
+- 微信登录失效会停止微信通道并提示重新登录；本地终端仍可继续使用。
+
+> 说明：微信协议字段与端到端收发目前以 mock/协议级测试为准，真实账号验收见 `doc/command_tasks.md`（CHAT-014）。
+
 ## 微信报告投递
 
 微信投递是独立的可选出口，不影响默认的新闻采集和报告生成流程。项目包含 iLink Bot 客户端、二维码登录、入站消息绑定、摘要发送、错误分类、有限重试和投递状态记录。首次使用需要可以访问 iLink 服务的网络及可用的 Bot 账号。

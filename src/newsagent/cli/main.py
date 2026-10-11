@@ -324,6 +324,12 @@ def cmd_semantic_search(args) -> int:
     return 0
 
 
+def cmd_chat(args) -> int:
+    """Start the unified News Chat session (CHAT-007)."""
+    from ..chat.runner import run_chat
+    return run_chat(no_wechat=getattr(args, "no_wechat", False))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="news", description="AI News Agent CLI")
     sub = p.add_subparsers(dest="command", required=True)
@@ -404,6 +410,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="explicit report file; must match --mode (.md/.html/.pdf)",
     )
     wsp.set_defaults(func=cmd_wechat_send)
+
+    sp = sub.add_parser("chat", help="interactive chat (terminal + WeChat)")
+    sp.add_argument("--no-wechat", action="store_true", help="run local-only, without WeChat input/output")
+    sp.set_defaults(func=cmd_chat)
 
     sp = sub.add_parser("index", help="build event embeddings (TASK-044)")
     sp.add_argument("--limit", type=int, default=500)
